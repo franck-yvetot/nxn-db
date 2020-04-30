@@ -1,0 +1,23 @@
+{
+  "name": "@nxn/db",
+  "version": "1.0.0",
+  "description": "DB services confurable with nxn application config",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/franck-yvetot/nxn-db.git"
+  },
+  "keywords": [
+    "nxn",
+    "db"
+  ],
+  "author": "Franck Yvetot",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/franck-yvetot/nxn-db/issues"
+  },
+  "homepage": "https://github.com/franck-yvetot/nxn-db#readme"
+}
