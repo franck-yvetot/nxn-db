@@ -1,6 +1,6 @@
-const debug = require("nxn-boot/debug.service")('MongoDb');
+const debug = require("@nxn/debug")('MongoDb');
 
-const {configSce} = require('nxn-boot');
+const {configSce} = require('@nxn/boot');
 const MongoClient = require('mongodb').MongoClient;
 
 class MongoDbInstance

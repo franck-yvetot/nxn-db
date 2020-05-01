@@ -1,6 +1,6 @@
 // which db type to use, default to mongo
 const mongoose = require("mongoose");
-const debug = require("nxn-boot/debug.service")("DB");
+const debug = require("@nxn/debug")("DB");
 
 class DbService 
 {

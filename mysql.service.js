@@ -1,6 +1,6 @@
-const debug = require("nxn-boot/debug.service")('MySql');
+const debug = require("@nxn/debug")('MySql');
 
-const {configSce} = require('nxn-boot');
+const {configSce} = require('@nxn/boot');
 const mysql = require('mysql2/promise');
 
 class MySqlInstance
