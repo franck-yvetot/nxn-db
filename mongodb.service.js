@@ -80,6 +80,16 @@ class MongoDbInstance
     
     return docs;
   }
+
+  async count(query,col,limit=0,skip=0) {
+    await this.connect();
+
+    limit = parseInt(limit);
+    const n = await this.db.collection(col).countDocuments(query);
+    
+    return n;
+  }
+  
   async insertOne(doc,col) {
     await this.connect();
 
@@ -136,7 +146,7 @@ class MongoDbSce
   }
 
   // if init by boot.service, get a config
-  init(config,app,express) {
+  init(config) {
       this.config = config;
   }
 
