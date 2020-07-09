@@ -5,10 +5,16 @@ const mysql = require('mysql2/promise');
 
 class MySqlInstance
 {
+  constructor(config) {
+    this.init(config);
+}
 
-  constructor(config,conPath) {
+async init(config) {
+  if(!config || this.config)
+    return;
+
       this.config=config;
-      this.conPath = conPath;
+  this.conPath = config.conPath || '.MySql.json';
   }
 
   async connect() {
@@ -90,7 +96,7 @@ class MySqlSce
   }
 
   // if init by boot.service, get a config
-  init(config,app,express) {
+  init(config) {
       this.config = config;
   }
 
@@ -102,10 +108,7 @@ class MySqlSce
     else
         config = this.config;
 
-    let conPath = __clientDir;
-    conPath += config.conPath || this.config.conPath || '.MySql.json';
-
-    return new MySqlInstance(config,conPath)
+    return new MySqlInstance(config)
   }
 }
   

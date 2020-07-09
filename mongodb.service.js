@@ -6,9 +6,16 @@ const MongoClient = require('mongodb').MongoClient;
 class MongoDbInstance
 {
 
-  constructor(config,conPath) {
+  constructor(config) {
+      this.init(config);
+  }
+
+  async init(config) {
+    if(!config || this.config)
+      return;
+
       this.config=config;
-      this.conPath = conPath;
+    this.conPath = config.conPath || '.mongodb.json';
   }
 
   async connect() {
@@ -72,11 +79,19 @@ class MongoDbInstance
     return this.db.collection(col);
   }
 
+  async findOne(query,col) {
+    await this.connect();
+
+    const doc = await this.db.collection(col).find(query,{});
+    
+    return doc;
+  }
+
   async find(query,col,limit=0,skip=0) {
     await this.connect();
 
     limit = parseInt(limit);
-    const docs = await this.db.collection(col).find(query,{skip:skip,limit:limit}).toArray();
+    const docs = await this.db.collection(col).findOne(query,{skip:skip,limit:limit}).toArray();
     
     return docs;
   }
@@ -158,10 +173,7 @@ class MongoDbSce
     else
         config = this.config;
 
-    let conPath = __clientDir;
-    conPath += config.conPath || this.config.conPath || '.mongodb.json';
-
-    return new MongoDbInstance(config,conPath)
+    return new MongoDbInstance(config)
   }
 }
   
