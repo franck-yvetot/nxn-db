@@ -1,11 +1,13 @@
-const debug = require("@nxn/debug")('MySql');
-
+const debug = require("@nxn/debug")('MYSQL_SCE');
 const {configSce} = require('@nxn/boot');
+const {objectSce} = require("@nxn/ext");
+
 const mysql = require('mysql2/promise');
 
 class MySqlInstance
 {
   constructor(config) {
+        if(config)
     this.init(config);
 }
 
@@ -17,12 +19,14 @@ async init(config) {
   this.conPath = config.conPath || '.MySql';
   }
 
-  async connect() {
-    if(this.connected)
+    async connect(force=false) 
+    {
+        if(!force && this.connected)
         return true; 
 
     // buckets config
-    try {            
+        try 
+        {            
         let conInfo = configSce.loadConfig(this.conPath);
 
         if(!conInfo.MYSQL_USER)
@@ -65,7 +69,8 @@ async init(config) {
     }
 }  
 
-async close() {
+    async close() 
+    {
   if(this.connected)
   {
     this.connected = false;
@@ -74,16 +79,27 @@ async close() {
   }
 }
 
-async query(q,values) {
-    
-    await this.connect();
+    async query(q,values,reconnect=false) 
+    {
+        await this.connect(reconnect);
 
     let res;
+        try {
     if(values)
       res = await this.con.execute(q,values);
     else
       res = await this.con.query(q);
 
+            } catch (error) {
+                debug.error("ERROR in MYSQL query "+q);
+                if(error.message == "Can't add new command when connection is in closed state")
+                {
+                    debug.log("try reconnecting...");
+                    return this.query(q,values,true);
+                }
+                throw error;            
+            }
+    
     if(res.insertId)
       return res.insertId;
 
@@ -92,119 +108,377 @@ async query(q,values) {
   }
 
   /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
-  async _mapWhere(query) {
+    _mapWhere(query,view) {
     var where = "";
+
+        const schema = view.schema();
+
     if(query)
+        {
+            const prefix = schema.fieldPrefix();
+
+            let aWhere = [];
         objectSce.forEachSync(query, (value,name)=> {
-            where += " "+name + "='"+value+"'";
+                const fw = view.getFieldWhere(name,value);
+                if(fw)
+                    aWhere.push(fw);
+                // where += " "+prefix+name + "='"+value+"'";
         });
+
+            if(aWhere.length)
+                where = "WHERE "+aWhere.join(" AND ");
+            else
+                where = "";
+        }
+
     return where;
 }
 
-async _mapLimit(limit=0,skip=0) {
+    _mapLimit(limit=0,skip=0) {
     let s='';
     if(limit) 
     {
-        s = " LIMIT "+skip+" "+limit;
+            s = " LIMIT "+skip+","+limit;
     }
 
     return s;
 }
 
-async findOne(query,col) {
+    _buildQuery(view, viewName,defaultQuery,map) {
+        let qs = (view && view.getQuery(viewName)) || (this.config.queries && this.config.queries[viewName]) 
+        || defaultQuery;
 
-    const where = this._mapWhere(query);
-    col = col || config.table;
-    let qs = this.queries.findOne || "select * from "+col;
-    qs += where;
+        const qs2 = qs.replace(/%([a-zA-Z_][a-zA-Z0-9_]+)%/g, (match,p1) => { 
+            return map[p1];
+        })
+        
+        return qs2;
+    }
 
-    const docs = await this.db.query(qs);
-    if(docs.length>=1)
-        return docs[0];
+    _formatRecord(rec,view) {
+        const format = view.getFieldsFormats();
+        const locale = view.locale();
+
+        if(!format)
+            return rec;
+        
+        objectSce.forEachSync(format,(v,k) => {
+            if(v == 'enum')
+                this._formatEnum(k,rec);
+            else if( v == 'enum_static')
+                this._formatEnumStatic(k,rec,locale);
+        });
+
+        return rec;
+    }
+
+    _formatEnum(fname,rec) 
+    {
+        if(rec[fname] && typeof (rec[fname+'__html']) != "undefined")
+        {
+            rec[fname] = {
+                value:rec[fname],
+                html:rec[fname+'__html']
+            };
+            delete rec[fname+'__html'];
+        }
+        else
+            return {value:rec[fname],html:''};
+    }
+
+    _formatEnumStatic(fname,rec,locale) 
+    {
+        if(rec[fname])
+        {
+            rec[fname] = {
+                value:rec[fname],
+                html:(locale && locale.e_(rec[fname],fname)) || rec[fname]
+            };
+        }
+    }
+
+    _formatLocaleValues(fname,rec) 
+    {
+        rec[fname] = this._locale.v_(rec[fname]);
+    }    
+
+    _parseValue(v,field) {
+        if(v && typeof v.value !="undefined")
+            v = v.value;
+
+        if(v === null || typeof v == "undefined")
+            return "NULL";
+
+        const type = field.type();
+        if(type == 'string')
+            if(v.replace)
+            return "'"+v.replace(/'/g,"\\'")+"'";
+            else
+                return v;
+        
+        if(type == 'integer')
+            return 0+v;
+
+        if(type == 'date' || type == 'timestamp')
+        {
+            if(typeof v == "integer")
+                return v;
+            if(v.includes && v.includes("NOW"))
+                return v.replace(/now(\s*[(]\s*[)])?/i,'NOW()');
+            return v;
+        }
+
+        return "'"+v+"'";
+    }
+
+    async findOne(query,options,model) {
+
+        const view = model ? model.getView(options.view||options.$view||"record") : null;
+        const col = options.collection || model.collection() || this.config.table || this.config.collection;
+
+        const where = this._mapWhere(query,view);
+
+        const limit = options.limit||1;
+        const skip = options.skip||0;
+        const qlimit = this._mapLimit(limit,skip);
+
+        // compile query
+        let qs = this._buildQuery(
+            view, 
+            'findOne',
+            "select %fields% from %table% %where% %limit%",
+                {
+                    table : col,
+                    fields: view.fieldsNames(true) || '',
+                    where: where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit: qlimit,
+                    ...query
+                }
+        );
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const docs = await this.query(qs);
     
+        if(docs.length==0)
     return null;
+
+        let data = this._formatRecord(docs[0],view);
+        let ret = {data};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+            
+        return ret;
+    }
+
+    getEmpty(options,model) {
+        const view = model ? model.getView(options.view||options.$view) : null;
+
+        let data={};
+        objectSce.forEachSync(view.fields(),(f,n) => {
+            data[n] = 
+            (f.type=='string') ? '' :
+            (f.type=='integer') ? 0  : 
+            '';
+        });
+
+        data = this._formatRecord(data,view);
+        let ret = {data};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+
+        return ret;
 }
 
-async find(query,col,limit=0,skip=0) {
-    const where = this._mapWhere(query);
-    col = col || config.table;
-    const qlimit = this._mapLimit(limit,skip);
+    async find(query,options,model) {
+        const view = model ? model.getView(options.view||options.$view) : null;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    let qs = this.queries.find || "select * from "+col;
-    qs += where;
-    qs += qlimit;
+        const where = this._mapWhere(query,view);
 
-    const docs = await this.db.query(qs);
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit='';
+
+        let qs = this._buildQuery(
+            view, 
+            'find',
+            "%select% %fields% from %table% %where% %limit%",
+                {
+                    table : col,
+                    fields: view.fieldsNames(true) || '',
+                    where: where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit: qlimit,
+                    select: "select SQL_CALC_FOUND_ROWS",
+                    ...query
+                }
+        );
+
+        let data = await this.query(qs);
+        if(this.config.log)
+            debug.log(qs + " -> nb = " + data.length+ " / $view="+view.name());
+
+        const nbdocs = await this.query("SELECT FOUND_ROWS() as nbrecords");
+        const nb = nbdocs[0].nbrecords;
+        let pages=null;
+        if(nb) {
+            pages = {
+                offset:skip,
+                limit:limit,
+                total:nb
+            };
+        }
+
+        // remap fields?
+        if(view.getFieldsFormats()) {
+            data = data.map(rec => this._formatRecord(rec,view) );
+        }
+
+        let ret = {data,pages};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+
+        return ret;
+}
+
+    async count(query,options,model) {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        const where = this._mapWhere(query,view);
+
+        const limit = options.limit||-1;
+        const skip = options.skip||0;
+        const qlimit = this._mapLimit(limit,skip);
+        let qs = this._buildQuery(
+            view, 
+            'count',
+            "count * from %table% %where% %limit%",
+                {
+                    table : col,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    where: where,
+                    limit: qlimit,
+                    ...query
+                }
+        );
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const docs = await this.query(qs);
     return docs;
 }
 
-async count(query,col,limit=0,skip=0) {
-    const where = this._mapWhere(query);
-    col = col || config.table;
-    const qlimit = this._mapLimit(limit,skip);
+    async insertOne(doc,options,model) {
 
-    let qs = this.queries.count || "count * from "+col;
-    qs += where;
-    qs += qlimit;
+        const view = model ? model.getView(options.view||options.$view||"record") : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    const docs = await this.db.query(qs);
-    return docs;
-}
-
-async insertOne(doc,col) {
-    col = col || config.table;
-
-    let qs = this.queries.insertOne || "INSERT INTO "+col;
-
-    let fnames = [];
+        let fields = view.fields();
     let values = [];
-    objectSce.forEachSync(doc,(value,name)=> {
+        let fnames = [];
+        objectSce.forEachSync(fields,(field,name)=> {
         fnames.push(name);
-        values.push(value);
+
+            let v;
+            if(typeof doc[name] == "undefined")
+                v = this._parseValue(field.default(),field);
+            else
+                v = this._parseValue(doc[name],field);
+
+            values.push(v);
     });
 
-    qs += "("+fnames.join(",")+") "+ "VALUES ('"+values.join("','")+"')";
+        let qs = this._buildQuery(
+            view, 
+            'insertOne',
+            "INSERT INTO %table% (%fields%) VALUES %values%",
+                {
+                    table : col,
+                    fields: view.fieldsNamesInsert(true),
+                    values: "("+values.join(",")+")",
+                    ...doc
+                }
+        );        
 
-    const insertId= await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res= await this.query(qs);
+        const insertId = res.insertId;
     
     return insertId;
 }
 
-async insertMany(docs,col) {
-    col = col || config.table;
-    let qs = this.queries.insertMany || "INSERT INTO "+col;
+    async insertMany(docs,options,model) {
+        const view = model ? model.getView(options.view||options.$view||"record") : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
     if(docs.length == 0)
         return null;
    
     const doc = docs[0];
+        let fields = view.fields();
     let fnames = [];
-    objectSce.forEachSync(doc,(value,name)=> {
+        objectSce.forEachSync(fields,(field,name)=> {
         fnames.push(name);
     });
    
     let aValues = [];
-    docs.forEach(row => {
+        docs.forEach(doc => {
         let values = [];
-        objectSce.forEachSync(row,(value)=> {
-            values.push(value);
+            objectSce.forEachSync(fields,(field,name)=> {
+                let v;
+                if(typeof doc[name] == "undefined")
+                    v = this._parseValue(field.default(),field);
+                else
+                    v = this._parseValue(doc[name],field);    
+                values.push(v);
         });
-        aValues.push("('"+values.join("','")+"')");
+    
+            aValues.push("("+values.join(",")+")");
     });
 
-    let qvals = aValues.join(",");
-    qs += " ("+fnames.join(",")+") "+ "VALUES ("+qvals+")";
+        let qs = this._buildQuery(
+            view, 
+            'insertMany',
+            "INSERT INTO %table% (%fields%) VALUES %values%",
+                {
+                    table : col,
+                    fields: view.fieldsNamesInsert(true),
+                    values: aValues.join(","),
+                }
+        );        
   
-    return await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+    
+        const res= await this.query(qs);
+        return res;
 }
 
-async updateOne(query,doc,col,addIfMissing=true) {
+    async updateOne(query,addIfMissing=true,options,model) {
 
-    col = col || config.table;
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
     let qs = this.queries.updateOne || 
         (addIfMissing ? "REPLACE " : "UPDATE ")+col+" SET ";
 
-    const where = this._mapWhere(query);
+        const where = this._mapWhere(query,view);
 
     let fnames = [];
     let values = [];
@@ -216,16 +490,22 @@ async updateOne(query,doc,col,addIfMissing=true) {
     qs += "("+fnames.join(",")+") "+ "VALUES ('"+values.join("','")+"')";
     qs += where;
 
-    const res = await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs);
     
     return res;
 }
 
-async updateMany(query,docs,col,addIfMissing=true) {
+    async updateMany(query,docs,addIfMissing=true,options, model) {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
     if(docs.length == 0)
         return null;
 
-    const where = this._mapWhere(query);
+        const where = this._mapWhere(query,view);
 
     col = col || config.table;
     let qs = this.queries.updateMany || 
@@ -250,31 +530,44 @@ async updateMany(query,docs,col,addIfMissing=true) {
     qs += " ("+fnames.join(",")+") "+ "VALUES ("+qvals+")";
     qs += where;
 
-    const res = await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs);
     
     return res;
 }
 
-async deleteOne(query,col) {
-    col = col || config.table;
+    async deleteOne(query,options, model) {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
     let qs = this.queries.deleteOne || "DELETE FROM "+col;
         
-    const where = this._mapWhere(query);
+        const where = this._mapWhere(query,view);
     qs += where;
 
-    const res = await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs);
     
     return res;
 }
 
-async deleteMany(query,col) {
-    col = col || config.table;
+    async deleteMany(query,options, model) {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
     let qs = this.queries.deleteMany || "DELETE FROM "+col;
         
-    const where = this._mapWhere(query);
+        const where = this._mapWhere(query,view);
     qs += where;
 
-    const res = await this.db.query(qs);
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs);
     
     return res;
 }  
@@ -284,25 +577,14 @@ async deleteMany(query,col) {
 class MySqlSce
 {
   constructor() {
-      this.config = {};
+        this.instances={};
   }
+    getInstance(instName) {
+        if(this.instances[instName])
+            return this.instances[instName];
 
-  // if init by boot.service, get a config
-  init(config) {
-      this.config = config;
-  }
-
-  getInstance(name) {
-    let config = {};
-
-    if(this.config.instances && this.config.instances[name])
-        config = this.config.instances[name];
-    else
-        config = this.config;
-
-    return new MySqlInstance(config)
+        return (this.instances[instName] = new MySqlInstance());
   }
 }
-  
 
 module.exports = new MySqlSce();
