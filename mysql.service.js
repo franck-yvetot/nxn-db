@@ -92,9 +92,10 @@ async init(config) {
 
             } catch (error) {
                 debug.error("ERROR in MYSQL query "+q);
-                if(error.message == "Can't add new command when connection is in closed state")
+                if(error.message == "Can't add new command when connection is in closed state" 
+                || error.message == "This socket has been ended by the other party")
                 {
-                    debug.log("try reconnecting...");
+                    debug.error("try reconnecting...");
                     return this.query(q,values,true);
                 }
                 throw error;            
