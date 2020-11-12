@@ -161,7 +161,7 @@ async init(config) {
         const locale = view.locale();
 
         if(!format)
-            return rec;
+            return  Object.assign({}, rec);
         
         objectSce.forEachSync(format,(v,k) => {
             if(v == 'enum')
