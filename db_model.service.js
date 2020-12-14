@@ -259,7 +259,7 @@ class DbSchema
         // get meta
         this._desc = desc;
         this._meta = desc.meta || desc;
-        this._name = this._meta.name || 'Object';
+        this._name = this._meta.name || this._meta.title || 'Object';
 
         this._views = {};
 
@@ -381,6 +381,7 @@ class DbModelInstance
         if(!config || this._config)
             return;
 
+        this._name = name;
         this._config=config;
         this._db = db;
         this._schema = schema;
@@ -392,6 +393,10 @@ class DbModelInstance
 
     locale() {
         return this._locale;
+    }
+
+    name() {
+        return this._name;
     }
 
     schema() {
@@ -423,6 +428,11 @@ class DbModelInstance
         this._views[n] = new DbView(n,viewDesc,this);
         return this._views[n];
     }        
+    
+    createCollection() {
+        return this._db.createCollection(this);
+    }
+
 
   /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
     findById(id,options={}) {

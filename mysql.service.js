@@ -84,16 +84,19 @@ async init(config) {
         await this.connect(reconnect);
 
     let res;
+        
         try {
     if(values)
       res = await this.con.execute(q,values);
     else
       res = await this.con.query(q);
-
-            } catch (error) {
+        } 
+        catch (error) 
+        {
                 debug.error("ERROR in MYSQL query "+q);
                 if(error.message == "Can't add new command when connection is in closed state" 
-                || error.message == "This socket has been ended by the other party")
+            || error.code == 'EPIPE')
+            //message == "This socket has been ended by the other party")
                 {
                     debug.error("try reconnecting...");
                     return this.query(q,values,true);
@@ -163,17 +166,39 @@ async init(config) {
         if(!format)
             return  Object.assign({}, rec);
         
-        objectSce.forEachSync(format,(v,k) => {
-            if(v == 'enum')
-                this._formatEnum(k,rec);
-            else if( v == 'enum_static')
-                this._formatEnumStatic(k,rec,locale);
+        objectSce.forEachSync(format,(vcsv,k) => 
+        {
+            let av = vcsv.split(',');
+            for (let i=av.length-1;i>=0;i--)
+            {
+                // execute in reverse order
+                let v = av[i].trim();
+                const func = "_format_"+v;
+                if(typeof this[func] == "function")
+                    this[func](k,rec,locale);
+            }
         });
 
         return rec;
     }
 
-    _formatEnum(fname,rec) 
+    _format_json(fname,rec) 
+    {
+        if(rec[fname])
+        {
+            rec[fname] = JSON.parse(rec[fname]);
+        }
+    }
+
+    _format_base64(fname,rec) 
+    {
+        if(rec[fname])
+        {
+            rec[fname] = Buffer.from(rec[fname], 'base64').toString('utf8');
+        }
+    }
+    
+    _format_enum(fname,rec) 
     {
         if(rec[fname] && typeof (rec[fname+'__html']) != "undefined")
         {
@@ -187,7 +212,7 @@ async init(config) {
             return {value:rec[fname],html:''};
     }
 
-    _formatEnumStatic(fname,rec,locale) 
+    _format_enum_static(fname,rec,locale) 
     {
         if(rec[fname])
         {
@@ -230,6 +255,85 @@ async init(config) {
         }
 
         return "'"+v+"'";
+    }
+
+    _fieldDef(schemaField) {
+        const fname = schemaField.dbName();
+        let def = fname+" ";
+        const type = schemaField.type().toLowerCase();
+        const size = schemaField._prop("size",null);
+        let isPrimaryKey = false;
+        switch(type) {
+            case 'string':
+                if(size)
+                    def += "VARCHAR("+size+")";
+                else
+                def += "TEXT";
+                break;
+            case 'integer':
+                def += "INT("+(size||"11")+")";
+                if(schemaField._prop("x-auto-id",null))
+                {
+                    def += " AUTO_INCREMENT NOT NULL";
+                    isPrimaryKey = true;
+                }
+                break;
+            case 'date':
+                def += "DATE";
+                break;                    
+            case 'float':
+                def += "FLOAT";
+                break;
+            default:
+                throw new Error("unknown field type "+type);
+        }
+
+        let key = '';
+        if(isPrimaryKey)
+            key = "PRIMARY KEY("+fname+")";       
+
+        return {def,key};
+    }    
+
+    _mapFieldsTypes(metadata) {
+        fdefs = [];
+        keys = [];
+        for(let i = 0 ; i < metadata.length;i++)
+        {
+            const {def,key} = this._fieldDef(metadata[i]);
+            fdefs.push(def);
+            if(key)
+                fkeys.push(key);
+        }
+        return {fdefs,fkeys};
+    }
+
+    async createCollection(model) {
+        const view = model ? model.getView(options.view||options.$view||"record") : null;
+        const col = model.collection() || this.config.table || this.config.collection;
+
+        const {fdefs,fkeys} = this._mapFieldsTypes(view.metadata());
+        const fields_def = fdefs.join(',');       
+        let fields_keys = fkeys.join(',');
+        if(fields_keys)
+            fields_keys = ','+fields_keys;
+
+        // compile query
+        let qs = this._buildQuery(
+            view, 
+            'create_collection',
+            "CREATE TABLE IF NOT EXISTS %table% (%fields_def%%fields_keys%)",
+                {
+                    table : col,
+                    fields_def: fieldsDef
+                }
+        );               
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs);
+        return true;
     }
 
     async findOne(query,options,model) {
