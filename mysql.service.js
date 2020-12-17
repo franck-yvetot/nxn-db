@@ -112,7 +112,7 @@ async init(config) {
   }
 
   /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
-    _mapWhere(query,view) {
+    _mapWhere(query,view,withTablePrefix=true) {
     var where = "";
 
         const schema = view.schema();
@@ -123,7 +123,7 @@ async init(config) {
 
             let aWhere = [];
         objectSce.forEachSync(query, (value,name)=> {
-                const fw = view.getFieldWhere(name,value);
+                    const fw = view.getFieldWhere(name,value,withTablePrefix);
                 if(fw)
                     aWhere.push(fw);
                 // where += " "+prefix+name + "='"+value+"'";
@@ -403,7 +403,7 @@ async init(config) {
         const view = model ? model.getView(options.view||options.$view) : null;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-        const where = this._mapWhere(query,view);
+        const where = this._mapWhere(query,view,true);
 
         let qlimit,skip,limit;
         if(options.limit)
@@ -418,9 +418,10 @@ async init(config) {
         let qs = this._buildQuery(
             view, 
             'find',
-            "%select% %fields% from %table% %where% %limit%",
+            "%select% %fields% from %TABLE% %where% %limit%",
                 {
                     table : col,
+                    TABLE: col+' '+view.tableAlias(),
                     fields: view.fieldsNames(true) || '',
                     where: where,
                     WHERE:(where ? where : "WHERE 1=1"),
@@ -462,7 +463,7 @@ async init(config) {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-        const where = this._mapWhere(query,view);
+        const where = this._mapWhere(query,view,true);
 
         const limit = options.limit||-1;
         const skip = options.skip||0;
@@ -495,7 +496,8 @@ async init(config) {
         let fields = view.fields();
     let values = [];
         let fnames = [];
-        objectSce.forEachSync(fields,(field,name)=> {
+        objectSce.forEachSync(fields,(field,name)=> 
+        {
         fnames.push(name);
 
             let v;
@@ -543,7 +545,8 @@ async init(config) {
     });
    
     let aValues = [];
-        docs.forEach(doc => {
+        docs.forEach(doc => 
+        {
         let values = [];
             objectSce.forEachSync(fields,(field,name)=> {
                 let v;
@@ -575,25 +578,91 @@ async init(config) {
         return res;
 }
 
-    async updateOne(query,addIfMissing=true,options,model) {
+    async updateOne(query,doc,addIfMissing=false,options,model) {
 
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    let qs = this.queries.updateOne || 
-        (addIfMissing ? "REPLACE " : "UPDATE ")+col+" SET ";
-
-        const where = this._mapWhere(query,view);
-
-    let fnames = [];
+        let fields = view.fields();
     let values = [];
-    objectSce.forEachSync(doc,(value,name)=> {
+        let fnames = [];
+        objectSce.forEachSync(fields,(field,name)=> 
+        {
         fnames.push(name);
-        values.push(value);
+
+            let v;
+            if(typeof doc[name] == "undefined")
+                v = this._parseValue(field.default(),field);
+            else
+                v = this._parseValue(doc[name],field);
+
+            values.push(v);
     });
 
-    qs += "("+fnames.join(",")+") "+ "VALUES ('"+values.join("','")+"')";
-    qs += where;
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit = 'LIMIT 1';    
+
+        const where = this._mapWhere(query,view,false); // where without table prefix (_oid but not T1._oid)
+        let qs;
+        if(addIfMissing)
+        {
+            let op = "REPLACE ";
+
+            qs = this._buildQuery(
+                view, 
+                'replaceOne',
+                "%replace% INTO %table% (%fields%) VALUES (%values%)",
+                    {
+                        op:op,
+                        update:op,
+                        replace:op,
+                        table : col,
+                        TABLE: col, // +' '+view.tableAlias(),
+                        fields:view.fieldsNamesUpdate(true).join(','),
+                        values:values.join(','),
+    
+                        where: '',
+                        WHERE:'',
+                        limit: '',
+                        ...query,
+                        ...doc
+                    }
+            );             
+        }
+        else
+        {
+            let op = "UPDATE ";
+
+            // define fname=value csv list
+            let aFnames = view.fieldsNamesUpdate(true);
+            let fields_values = aFnames.map((name,i)=>name+'='+values[i]).join(',');
+            qs = this._buildQuery(
+                view, 
+                'updateOne',
+                "%update% %table% SET %fields_values% %where% %limit%",
+                    {
+                        op:op,
+                        update:op,
+                        table : col,
+                        TABLE: col, // +' '+view.tableAlias(),
+                        fields: view.fieldsNamesUpdate(true),
+                        fields_values:fields_values,
+    
+                        where: where,
+                        WHERE:(where ? where : "WHERE 1=1"),
+                        limit: qlimit,
+                        ...query,
+                        ...doc
+                    }
+            );         
+        }       
 
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());

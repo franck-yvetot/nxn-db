@@ -101,6 +101,18 @@ class DbView {
         const meta = this._schema.metadata();
 
         const prefix = this._dbFieldPrefix = desc.dbFieldPrefix || model.fieldPrefix();
+        const aPrefix = prefix.split('.');
+        if(aPrefix.length>1)
+        {
+            this._dbTableAlias = aPrefix[0];
+            this._dbFieldPrefixNoTable =  aPrefix[1];
+        }
+        else
+        {
+            this._dbTableAlias = null;
+            this._dbFieldPrefixNoTable = prefix;
+        }
+
         let fmeta = {};
 
         this._fields = {};
@@ -133,7 +145,15 @@ class DbView {
 
             this._metadata = {fields:fmeta};
         }
-        else if(typeof desc.fields == "object") 
+        else 
+        {
+            let fields;
+            if(typeof desc.fields == "object")
+                fields = desc.fields;
+            else if(typeof desc.fields == "function")
+                fields = desc.fields();
+
+            if(fields)
         {
             // get fields from config
 
@@ -141,7 +161,7 @@ class DbView {
             let meta = {};
 
             // Object => get fields from description
-            objectSce.forEachSync(desc.fields,(field,fname)=>{
+                objectSce.forEachSync(fields,(field,fname)=>{
                 let field2 = Object.assign({},field);
     
                 if(prefix && !field.dbFieldPrefix)
@@ -161,29 +181,17 @@ class DbView {
             this._fnames = aFnames.join(",");
             this._metadata = {fields:meta};
         }
-
-        if(!desc.where)
-            this.desc.where = aFnames.map(n=>this._fields[n].dbName(prefix)+" = '$value'");
-        else {
-            let where = {};
-            objectSce.forEachSync(desc.where,(v,n)=> {
-                if(typeof v == "string")
-                    where[n]=v;
-                else if(v)
-                {
-                    let field = this._fields[n] || schema.field(n);
-                    if(field)
-                        where[n]=field.dbName(prefix)+" = '$val'";
-                    else
-                        debug.error("unknown field in [where] description for view "+this._name+" of model "+model.name());
-                }
-            });
-            this.desc.where = where;
         }
+
+        // get where clause
+        let w = {...desc.where};
+        this.desc.wherePrefix = this._getWhere(w,prefix); // with full table/field prefix aka T1._
+        this.desc.whereNoTablePrefix = this._getWhere(w,this._dbFieldPrefixNoTable); // with only field prefix aka _
 
         // get internal db names with prefix if any
         this._dbFnames = aFnames.map(n=>this._fields[n].dbName(prefix)+' AS `'+this._fields[n].alias()+'`').join(',');
         this._dbFnamesInsert = aFnames.map(n=>this._fields[n].dbName(prefix)).join(',');
+        this._dbFnamesUpdateArray = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable));
 
         /*
         if(!prefix)
@@ -198,6 +206,30 @@ class DbView {
         if(this.desc.format) {
             this._format = this.desc.format;
         }
+    }
+
+    _getWhere(whereDesc,fieldPrefix) {
+        let where;
+
+        if(!whereDesc)
+            where = aFnames.map(n=>this._fields[n].dbName(fieldPrefix)+" = '$value'");
+        else {
+            where = {};
+            objectSce.forEachSync(whereDesc,(v,n)=> {
+                if(typeof v == "string")
+                    where[n]=v;
+                else if(v)
+                {
+                    let field = this._fields[n] || schema.field(n);
+                    if(field)
+                        where[n]=field.dbName(fieldPrefix)+" = '$val'";
+                    else
+                        debug.error("unknown field in [where] description for view "+this._name+" of model "+model.name());
+                }
+            });            
+        }
+
+        return where;
     }
 
     locale() {
@@ -217,12 +249,22 @@ class DbView {
         else
             return this._dbFnamesInsert; 
     }
+    fieldsNamesUpdate(isDbName=false) { 
+        if(!isDbName)
+            return this._fnames; 
+        else
+            return this._dbFnamesUpdateArray; 
+    }    
+    
     fields() {
         return this._fields;
     }
 
     fieldPrefix() {
         return this._dbFieldPrefix;
+    }
+    tableAlias() {
+        return this._dbTableAlias;
     }
 
     getQuery(name) {
@@ -232,8 +274,11 @@ class DbView {
         return this._schema.getDefaultQuery(name);
     }
 
-    getFieldWhere(fname,val) {
-        return (this.desc.where[fname] && this.desc.where[fname].replace("$val",val)) || "";
+    getFieldWhere(fname,val,tablePrefix=true) {
+        if(tablePrefix)
+            return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace("$val",val)) || "";
+        else
+            return (this.desc.whereNoTablePrefix[fname] && this.desc.whereNoTablePrefix[fname].replace("$val",val)) || "";
     }
 
     name() {
@@ -465,8 +510,8 @@ class DbModelInstance
         return this._db.insertMany(docs,options,this);
     }
 
-    async updateOne(doc,options={}) {
-        return this._db.updateOne(doc,options,this);
+    async updateOne(where,doc,options={}) {
+        return this._db.updateOne(where,doc,false,options,this);
         //const addIfMissing = !!(options.upsert);
     }
 
