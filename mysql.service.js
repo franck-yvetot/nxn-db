@@ -251,7 +251,7 @@ async init(config) {
                 return v;
             if(v.includes && v.includes("NOW"))
                 return v.replace(/now(\s*[(]\s*[)])?/i,'NOW()');
-            return v;
+            return "'"+v+"'";
         }
 
         return "'"+v+"'";

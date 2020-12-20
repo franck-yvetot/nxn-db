@@ -189,7 +189,9 @@ class DbView {
         this.desc.whereNoTablePrefix = this._getWhere(w,this._dbFieldPrefixNoTable); // with only field prefix aka _
 
         // get internal db names with prefix if any
-        this._dbFnames = aFnames.map(n=>this._fields[n].dbName(prefix)+' AS `'+this._fields[n].alias()+'`').join(',');
+        this._dbFnames = aFnames.map(n=>
+            this._fields[n].dbName(prefix)+' AS `'+this._fields[n].alias()+'`'
+        ).join(',');
         this._dbFnamesInsert = aFnames.map(n=>this._fields[n].dbName(prefix)).join(',');
         this._dbFnamesUpdateArray = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable));
 
