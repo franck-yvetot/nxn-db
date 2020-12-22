@@ -480,6 +480,28 @@ class DbModelInstance
         return this._db.createCollection(this);
     }
 
+    removeFieldsFromData(aFnames, data,metadata=null)
+    {
+        for(let i = 0; i < aFnames.length; i++)
+        {
+            let fname = aFnames[i];
+
+            if(typeof data[fname] != "undefined")
+            {
+                delete (data[fname]);
+                if(typeof data[fname+'__html'] != "undefined")
+                {
+                    delete (data[fname+'__html']);
+                }
+            }
+            if(metadata && typeof metadata.fields[fname] != "undefined")
+            {
+                delete (metadata.fields[fname]);
+            }
+        }
+
+        return {data,metadata};
+    }
 
   /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
     findById(id,options={}) {
