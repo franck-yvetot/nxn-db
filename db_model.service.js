@@ -90,7 +90,8 @@ class SchemaField {
  *  for each model instance.
  */
 class DbView {
-    constructor(name,desc,model) {
+    constructor(name,desc,model) 
+    {
         this.desc = desc;
         this._name = name;
         this._model = model;
@@ -222,7 +223,7 @@ class DbView {
                     where[n]=v;
                 else if(v)
                 {
-                    let field = this._fields[n] || schema.field(n);
+                    let field = this._fields[n] || this._schema.field(n);
                     if(field)
                         where[n]=field.dbName(fieldPrefix)+" = '$val'";
                     else
@@ -289,6 +290,10 @@ class DbView {
 
     schema() {
         return this._schema;
+    }
+
+    model() {
+        return this._model;
     }
 
     metadata() {

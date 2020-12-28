@@ -6,12 +6,14 @@ const mysql = require('mysql2/promise');
 
 class MySqlInstance
 {
-  constructor(config) {
+    constructor(config) 
+    {
         if(config)
     this.init(config);
 }
 
-async init(config) {
+    async init(config) 
+    {
   if(!config || this.config)
     return;
 
@@ -79,7 +81,7 @@ async init(config) {
   }
 }
 
-    async query(q,values,reconnect=false) 
+    async query(q,view=null,values=null,reconnect=false) 
     {
         await this.connect(reconnect);
 
@@ -94,12 +96,26 @@ async init(config) {
         catch (error) 
         {
                 debug.error("ERROR in MYSQL query "+q);
-                if(error.message == "Can't add new command when connection is in closed state" 
-            || error.code == 'EPIPE')
-            //message == "This socket has been ended by the other party")
+            debug.error("ERROR message "+error.message);
+
+            if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
                 {
                     debug.error("try reconnecting...");
-                    return this.query(q,values,true);
+                return this.query(q,view,values,true);
+            }
+            if(error.code == 'ER_BAD_FIELD_ERROR')
+            {
+                debug.error("try adding new field...");
+                const isOk = await this._fixMissingField(error,view);
+                if(isOk)
+                    return this.query(q,view,values,false);
+            }
+            if(error.code == 'ER_NO_SUCH_TABLE')
+            {
+                debug.error("try adding new table...");
+                const isOk = await this._fixMissingTable(error,view);
+                if(isOk)
+                    return this.query(q,view,values,false);
                 }
                 throw error;            
             }
@@ -111,7 +127,8 @@ async init(config) {
     return rows;
   }
 
-  /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
+  /* ============ PRIVATE METHODS ================= */
+
     _mapWhere(query,view,withTablePrefix=true) {
     var where = "";
 
@@ -261,14 +278,21 @@ async init(config) {
         const fname = schemaField.dbName();
         let def = fname+" ";
         const type = schemaField.type().toLowerCase();
-        const size = schemaField._prop("size",null);
+        const size = schemaField._prop("maxLength",null);
+        let defaultV = schemaField._prop("default",null);
         let isPrimaryKey = false;
+        let nullable = schemaField._prop("nullable",null)
+
         switch(type) {
             case 'string':
                 if(size)
                     def += "VARCHAR("+size+")";
                 else
                 def += "TEXT";
+
+                if(defaultV!==null)
+                    def +=  " DEFAULT '"+defaultV+"'";
+        
                 break;
             case 'integer':
                 def += "INT("+(size||"11")+")";
@@ -276,17 +300,34 @@ async init(config) {
                 {
                     def += " AUTO_INCREMENT NOT NULL";
                     isPrimaryKey = true;
+                    nullable = null;
                 }
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+
                 break;
             case 'date':
                 def += "DATE";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
                 break;                    
             case 'float':
+            case 'number':
                 def += "FLOAT";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+            break;
+            case 'double':
+                def += "DOUBLE";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
                 break;
             default:
                 throw new Error("unknown field type "+type);
         }
+
+        if(nullable!==null)
+            def += nullable ? ' NULL' : " NOT NULL";
 
         let key = '';
         if(isPrimaryKey)
@@ -295,12 +336,12 @@ async init(config) {
         return {def,key};
     }    
 
-    _mapFieldsTypes(metadata) {
-        fdefs = [];
-        keys = [];
-        for(let i = 0 ; i < metadata.length;i++)
+    _mapFieldsTypes(fields) {
+        let fdefs = [];
+        let fkeys = [];
+        for(let p in fields)
         {
-            const {def,key} = this._fieldDef(metadata[i]);
+            const {def,key} = this._fieldDef(fields[p]);
             fdefs.push(def);
             if(key)
                 fkeys.push(key);
@@ -308,11 +349,96 @@ async init(config) {
         return {fdefs,fkeys};
     }
 
-    async createCollection(model) {
-        const view = model ? model.getView(options.view||options.$view||"record") : null;
-        const col = model.collection() || this.config.table || this.config.collection;
+    async _fixMissingField(error,view) {
+        const model = view.model();
+        const table = this._collection(model);
+        const fPrefix = view.fieldPrefix();
 
-        const {fdefs,fkeys} = this._mapFieldsTypes(view.metadata());
+        const matches = error.message.match(/Unknown column '([^']+)' in 'field list'/);
+        if(matches)
+        {
+            // get field schema 
+            let fname = matches[1];
+            if(fPrefix)
+                fname = fname.replace(new RegExp("^"+fPrefix),'');  
+
+            const fieldSchema = model.schema().field(fname);
+
+            if(fieldSchema)
+            {
+                // get field sql definition
+                const {def,key} = this._fieldDef(fieldSchema);
+                if(def)
+                {
+                    // create ALTER query
+                    let qs = this._buildQuery(
+                        view, 
+                        'add_field',
+                        "ALTER TABLE %table% ADD COLUMN %field_def%",
+                            {
+                                table,
+                                field_def: def
+                            }
+                    );
+
+                    // exec ALTER query
+                    if(this.config.log)
+                        debug.log(qs+ " / add field"+fname);
+
+                    const res = await this.query(qs,view);
+                    if(res)
+                        return true;
+                }
+            }
+            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+table);
+            // something went wrong
+            return false;
+        }
+
+        // something went wrong
+        return false;
+    }
+
+    async _fixMissingTable(error,view) {
+        const model = view.model();
+        const table = this._collection(model);
+
+        const matches = error.message.match(/Table '([^.]+).([^']+)' doesn't exist/);
+        if(matches)
+        {
+            // get field schema 
+            let dbNname = matches[1];
+            let missingTable = matches[2];
+            if(missingTable == table)
+            {
+                // missng table is the current view schema
+                const res = this.createCollection(null,model,view);
+            }
+            else
+                throw new Error("cant fix SQL query or add missing table "+dbNname+"."+missingTable);
+
+            // something went wrong
+            return false;
+        }
+
+        // something went wrong
+        return false;
+    }
+
+    _collection(model) {
+        return model.collection() || this.config.table || this.config.collection;
+    }
+
+    /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
+
+    async createCollection(options,model,view=null) 
+    {
+        if(!view)
+            view = model ? model.getView(options.view||options.$view||"record") : null;
+        const col = this._collection(model);
+        const fields = model.schema().fields();
+
+        const {fdefs,fkeys} = this._mapFieldsTypes(fields);
         const fields_def = fdefs.join(',');       
         let fields_keys = fkeys.join(',');
         if(fields_keys)
@@ -325,19 +451,19 @@ async init(config) {
             "CREATE TABLE IF NOT EXISTS %table% (%fields_def%%fields_keys%)",
                 {
                     table : col,
-                    fields_def: fieldsDef
+                    fields_def: fields_def
                 }
         );               
 
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res = await this.query(qs);
+        const res = await this.query(qs,view);
         return true;
     }
 
-    async findOne(query,options,model) {
-
+    async findOne(query,options,model) 
+    {
         const view = model ? model.getView(options.view||options.$view||"record") : null;
         const col = options.collection || model.collection() || this.config.table || this.config.collection;
 
@@ -365,7 +491,7 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const docs = await this.query(qs);
+        const docs = await this.query(qs,view);
     
         if(docs.length==0)
     return null;
@@ -379,7 +505,8 @@ async init(config) {
         return ret;
     }
 
-    getEmpty(options,model) {
+    getEmpty(options,model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : null;
 
         let data={};
@@ -399,7 +526,8 @@ async init(config) {
         return ret;
 }
 
-    async find(query,options,model) {
+    async find(query,options,model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : null;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -431,7 +559,7 @@ async init(config) {
                 }
         );
 
-        let data = await this.query(qs);
+        let data = await this.query(qs,view);
         if(this.config.log)
             debug.log(qs + " -> nb = " + data.length+ " / $view="+view.name());
 
@@ -459,7 +587,8 @@ async init(config) {
         return ret;
 }
 
-    async count(query,options,model) {
+    async count(query,options,model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -484,11 +613,12 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const docs = await this.query(qs);
+        const docs = await this.query(qs,view);
     return docs;
 }
 
-    async insertOne(doc,options,model) {
+    async insertOne(doc,options,model) 
+    {
 
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
@@ -524,13 +654,14 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res= await this.query(qs);
+        const res= await this.query(qs,view);
         const insertId = res.insertId;
     
     return insertId;
 }
 
-    async insertMany(docs,options,model) {
+    async insertMany(docs,options,model) 
+    {
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -574,7 +705,7 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
     
-        const res= await this.query(qs);
+        const res= await this.query(qs,view);
         return res;
 }
 
@@ -667,12 +798,13 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res = await this.query(qs);
+        const res = await this.query(qs,view);
     
     return res;
 }
 
-    async updateMany(query,docs,addIfMissing=true,options, model) {
+    async updateMany(query,docs,addIfMissing=true,options, model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -707,12 +839,13 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res = await this.query(qs);
+        const res = await this.query(qs,view);
     
     return res;
 }
 
-    async deleteOne(query,options, model) {
+    async deleteOne(query,options, model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -724,12 +857,13 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res = await this.query(qs);
+        const res = await this.query(qs,view);
     
     return res;
 }
 
-    async deleteMany(query,options, model) {
+    async deleteMany(query,options, model) 
+    {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
@@ -741,7 +875,7 @@ async init(config) {
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
-        const res = await this.query(qs);
+        const res = await this.query(qs,view);
     
     return res;
 }  
