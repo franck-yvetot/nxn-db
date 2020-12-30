@@ -302,7 +302,7 @@ class MySqlInstance
                     isPrimaryKey = true;
                     nullable = null;
                 }
-                if(defaultV!==null)
+                else if(defaultV!==null)
                     def +=  " DEFAULT "+defaultV;
 
                 break;
@@ -451,7 +451,8 @@ class MySqlInstance
             "CREATE TABLE IF NOT EXISTS %table% (%fields_def%%fields_keys%)",
                 {
                     table : col,
-                    fields_def: fields_def
+                    fields_def,
+                    fields_keys
                 }
         );               
 
@@ -502,6 +503,9 @@ class MySqlInstance
         if(options.withMeta)
             ret.metadata = view.metadata();
             
+        if(options.withLocale)
+            ret.locale = view.locale();
+            
         return ret;
     }
 
@@ -522,6 +526,9 @@ class MySqlInstance
 
         if(options.withMeta)
             ret.metadata = view.metadata();
+
+        if(options.withLocale)
+            ret.locale = view.locale();
 
         return ret;
 }
@@ -583,6 +590,9 @@ class MySqlInstance
 
         if(options.withMeta)
             ret.metadata = view.metadata();
+
+        if(options.withLocale)
+            ret.locale = view.locale();
 
         return ret;
 }

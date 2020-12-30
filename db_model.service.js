@@ -132,7 +132,13 @@ class DbView {
 
             this._fnames.split(',').map(n1=>{
                 const n = n1.trim();
-                let field2 = Object.assign({},schema.field(n).desc());
+                let schemaF = schema.field(n);
+                let field2;
+
+                if(schemaF)
+                    field2 = Object.assign({},schemaF.desc());
+                else if(this.desc.otherFields && this.desc.otherFields[n])
+                    field2 = Object.assign({},this.desc.otherFields[n]);
 
                 if(prefix)
                     field2.dbFieldPrefix = prefix;
@@ -153,6 +159,9 @@ class DbView {
                 fields = desc.fields;
             else if(typeof desc.fields == "function")
                 fields = desc.fields();
+
+            if(typeof this.desc.otherFields == "object")
+                fields = {...fields,...this.desc.otherFields};
 
             if(fields)
         {
@@ -193,7 +202,7 @@ class DbView {
         this._dbFnames = aFnames.map(n=>
             this._fields[n].dbName(prefix)+' AS `'+this._fields[n].alias()+'`'
         ).join(',');
-        this._dbFnamesInsert = aFnames.map(n=>this._fields[n].dbName(prefix)).join(',');
+        this._dbFnamesInsert = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable)).join(',');
         this._dbFnamesUpdateArray = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable));
 
         /*
@@ -441,6 +450,10 @@ class DbModelInstance
     
         this._fId = schema.fId() || '_id';
         this._dbFieldPrefix=config.dbFieldPrefix||schema.fieldPrefix();
+    }
+
+    config() {
+        return this._init;
     }
 
     locale() {
