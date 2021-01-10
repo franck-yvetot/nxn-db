@@ -287,6 +287,9 @@ class DbView {
     }
 
     getFieldWhere(fname,val,tablePrefix=true) {
+        if(typeof val == "object" && typeof val.value != "undefined")
+            val = val.value;
+
         if(tablePrefix)
             return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace("$val",val)) || "";
         else
@@ -373,6 +376,13 @@ class DbSchema
 
     collection() {
         return this._collection;
+    }
+
+    prop(n,dft=null) {
+        if(typeof this._desc[n] != "undefined")
+            return this._desc[n];
+        else
+            return dft;
     }
 
     fId() {
@@ -462,6 +472,10 @@ class DbModelInstance
 
     name() {
         return this._name;
+    }
+
+    prop(n,dft=null) {
+        return this._schema.prop(n,dft);
     }
 
     schema() {
