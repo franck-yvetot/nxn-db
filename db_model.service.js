@@ -291,9 +291,9 @@ class DbView {
             val = val.value;
 
         if(tablePrefix)
-            return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace("$val",val)) || "";
+            return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
         else
-            return (this.desc.whereNoTablePrefix[fname] && this.desc.whereNoTablePrefix[fname].replace("$val",val)) || "";
+            return (this.desc.whereNoTablePrefix[fname] && this.desc.whereNoTablePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
     }
 
     name() {
