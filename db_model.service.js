@@ -279,7 +279,7 @@ class DbView {
         return this._dbTableAlias;
     }
 
-    getQuery(name) {
+    getQuery(name,driver=null) {
         if(this.desc.queries && this.desc.queries[name])
             return this.desc.queries[name];
 
@@ -444,11 +444,11 @@ class DbSchema
 
 class DbModelInstance
 {
-    constructor(name,schema,db,locale,config) {
-        this.init(name,schema,db,locale,config);
+    constructor(name,schema,db,locale,config,modelManager) {
+        this.init(name,schema,db,locale,config,modelManager);
     }
 
-    init(name,schema,db,locale,config) {
+    init(name,schema,db,locale,config,modelManager) {
         if(!config || this._config)
             return;
 
@@ -460,6 +460,7 @@ class DbModelInstance
     
         this._fId = schema.fId() || '_id';
         this._dbFieldPrefix=config.dbFieldPrefix||schema.fieldPrefix();
+        this._modelManager = modelManager;
     }
 
     config() {
@@ -472,6 +473,10 @@ class DbModelInstance
 
     name() {
         return this._name;
+    }
+
+    modelManager() {
+        return this._modelManager;
     }
 
     prop(n,dft=null) {
@@ -587,8 +592,9 @@ class DbModelInstance
 
 class DbModel extends FlowNode
 {
-    constructor(instName) {
+    constructor(instName,modelManager) {
         super(instName);
+        this._modelManager = modelManager;
     }
 
     async init(config,ctxt,...injections) {
@@ -597,6 +603,11 @@ class DbModel extends FlowNode
         this._db = this.getInjection('db') || this.invalidParam("no db injection");
         this._locale = this.getInjection('locale') || null;
         this._schema = new DbSchema(config.schema,this._locale);
+
+        // store collection name for automatic creation of tables in db
+        const coll = this._schema.collection();
+        if(coll)
+            this._modelManager.registerCollectionModel(coll,this);
     }
 
     uri() {
@@ -616,7 +627,7 @@ class DbModel extends FlowNode
     }
 
     instance() {
-        return new DbModelInstance(this._schema.name(),this._schema,this._db,this._locale,this.config);
+        return new DbModelInstance(this._schema.name(),this._schema,this._db,this._locale,this.config,this._modelManager);
     }
 }
 
@@ -624,13 +635,29 @@ class DbModelSce
 {
     constructor () {
         this.instances={};
+        this.collections={};
     }
     getInstance(instName) {
         if(this.instances[instName])
             return this.instances[instName];
 
-        return (this.instances[instName] = new DbModel(instName));
+        const inst = this.instances[instName] = new DbModel(instName,this);
+
+        return inst;
+    }
+
+    // store a lookup of model by table name for recovery of missing tables/fields
+    registerCollectionModel(coll,model) {
+        this.collections[coll] = model;
+    }
+
+    getModelByCollection(coll) {
+        if(this.collections[coll])
+            return this.collections[coll];
+
+        return null;
     }
 }
 
-module.exports = new DbModelSce();
+const DB_SCE = new DbModelSce();
+module.exports = DB_SCE;

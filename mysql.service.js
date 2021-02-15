@@ -67,7 +67,7 @@ class MySqlInstance
     }
     catch(err) {
         debug.error(`cant connect to MySql instance `+err);
-        return Promise.reject({error:500,error:"cant conect to BigQuery "+err});
+        return Promise.reject({error:500,error:"cant conect to MySql "+err});
     }
 }  
 
@@ -400,8 +400,8 @@ class MySqlInstance
     }
 
     async _fixMissingTable(error,view) {
-        const model = view.model();
-        const table = this._collection(model);
+        let model = view.model();
+        let table = this._collection(model);
 
         const matches = error.message.match(/Table '([^.]+).([^']+)' doesn't exist/);
         if(matches)
@@ -409,6 +409,14 @@ class MySqlInstance
             // get field schema 
             let dbNname = matches[1];
             let missingTable = matches[2];
+            if(missingTable != table)
+            {
+                
+                model = model.modelManager();
+                table = model.collection();
+                view = null;
+            }
+
             if(missingTable == table)
             {
                 // missng table is the current view schema
@@ -859,17 +867,40 @@ class MySqlInstance
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    let qs = this.queries.deleteOne || "DELETE FROM "+col;
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit = 'LIMIT 1';    
         
         const where = this._mapWhere(query,view);
-    qs += where;
+
+        let qs = this._buildQuery(
+            view, 
+            'deleteOne',
+            "DELETE FROM %table% %where% %limit%",
+                {
+                    table : col,
+                    TABLE: col, // +' '+view.tableAlias(),
+
+                    where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit:qlimit,
+                    ...query
+                }
+        );
 
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
         const res = await this.query(qs,view);
+        const deleteRows = res.affectedRows||0;
     
-    return res;
+        return deleteRows;
 }
 
     async deleteMany(query,options, model) 
