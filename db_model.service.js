@@ -236,7 +236,7 @@ class DbView {
                     if(field)
                         where[n]=field.dbName(fieldPrefix)+" = '$val'";
                     else
-                        debug.error("unknown field in [where] description for view "+this._name+" of model "+model.name());
+                        debug.error("unknown field in [where] description for view "+this._name+" of model "+this.model.name());
                 }
             });            
         }
