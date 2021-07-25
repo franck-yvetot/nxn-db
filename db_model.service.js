@@ -90,13 +90,13 @@ class SchemaField {
  *  for each model instance.
  */
 class DbView {
-    constructor(name,desc,model) 
+    constructor(name,desc,model,lang=null) 
     {
         this.desc = desc;
         this._name = name;
         this._model = model;
         const schema = this._schema = model.schema();
-        const locale = this._locale = model.locale();
+        const locale = this._locale = model.locale(lang);
 
         // get fields in config or from schema
         const meta = this._schema.metadata();
@@ -236,7 +236,8 @@ class DbView {
                     if(field)
                         where[n]=field.dbName(fieldPrefix)+" = '$val'";
                     else
-                        debug.error("unknown field in [where] description for view "+this._name+" of model "+this.model.name());
+                        //debug.error("unknown field in [where] description for view "+this._name+" of model "+this.model.name());
+                        debug.error("unknown field in [where] description for view "+this._name);
                 }
             });            
         }
@@ -276,8 +277,15 @@ class DbView {
         return this._dbFieldPrefix;
     }
     tableAlias() {
-        return this._dbTableAlias;
+        return this._dbTableAlias || this._schema._collection;
     }
+
+    tableAsAlias() {
+        return this._dbTableAlias ? 
+            this._schema._collection+' AS '+this._dbTableAlias : 
+                this._schema._collection;
+    }
+
 
     getQuery(name,driver=null) {
         if(this.desc.queries && this.desc.queries[name])
@@ -456,6 +464,8 @@ class DbModelInstance
         this._config=config;
         this._db = db;
         this._schema = schema;
+        
+        // if selected lang, get locale for this lang, else, get multi linguage locale
         this._locale = locale;
     
         this._fId = schema.fId() || '_id';
@@ -501,7 +511,7 @@ class DbModelInstance
         return this._schema.collection();
     }
 
-    getView(n) {
+    getView(n,lang=null) {
         if(!this._views)
             this._views={};
 
@@ -509,7 +519,7 @@ class DbModelInstance
             return this._views[n];
 
         const viewDesc = this._schema.getViewDesc(n);
-        this._views[n] = new DbView(n,viewDesc,this);
+        this._views[n] = new DbView(n,viewDesc,this,lang);
         return this._views[n];
     }        
     
@@ -601,7 +611,7 @@ class DbModel extends FlowNode
         super.init(config,ctxt,injections);        
 
         this._db = this.getInjection('db') || this.invalidParam("no db injection");
-        this._locale = this.getInjection('locale') || null;
+        // this._locale = this.getInjection('locale') || null; // done in FlowNode
         this._schema = new DbSchema(config.schema,this._locale);
 
         // store collection name for automatic creation of tables in db
@@ -622,12 +632,11 @@ class DbModel extends FlowNode
         return this._db;
     }
 
-    locale() {
-        return this._locale;
-    }
-
-    instance() {
-        return new DbModelInstance(this._schema.name(),this._schema,this._db,this._locale,this.config,this._modelManager);
+    instance(lang=null) {
+        return new DbModelInstance(
+            this._schema.name(),this._schema,this._db,
+            this.locale(lang),
+            this.config,this._modelManager);
     }
 }
 
@@ -637,6 +646,7 @@ class DbModelSce
         this.instances={};
         this.collections={};
     }
+
     getInstance(instName) {
         if(this.instances[instName])
             return this.instances[instName];

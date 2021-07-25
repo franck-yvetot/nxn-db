@@ -412,8 +412,12 @@ class MySqlInstance
             if(missingTable != table)
             {
                 
-                model = model.modelManager();
-                table = model.collection();
+                model = model.modelManager().getModelByCollection(missingTable);
+                if(model)
+                {
+                    table = model.schema().collection();
+                    model = model.instance();
+                }
                 view = null;
             }
 
@@ -442,7 +446,7 @@ class MySqlInstance
     async createCollection(options,model,view=null) 
     {
         if(!view)
-            view = model ? model.getView(options.view||options.$view||"record") : null;
+            view = model ? model.getView(options && (options.view||options.$view)||"record") : null;
         const col = this._collection(model);
         const fields = model.schema().fields();
 
@@ -877,15 +881,15 @@ class MySqlInstance
         else
             qlimit = 'LIMIT 1';    
         
-        const where = this._mapWhere(query,view);
+        const where = this._mapWhere(query,view,false);
 
         let qs = this._buildQuery(
             view, 
             'deleteOne',
-            "DELETE FROM %table% %where% %limit%",
+            "DELETE FROM %TABLE% %where% %limit%",
                 {
                     table : col,
-                    TABLE: col, // +' '+view.tableAlias(),
+                    TABLE: col,
 
                     where,
                     WHERE:(where ? where : "WHERE 1=1"),
