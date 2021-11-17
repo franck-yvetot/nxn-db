@@ -635,7 +635,7 @@ class DbModel extends FlowNode
     instance(lang=null) {
         return new DbModelInstance(
             this._schema.name(),this._schema,this._db,
-            this.locale(lang),
+            this.locale.localeByLang(lang),
             this.config,this._modelManager);
     }
 }
