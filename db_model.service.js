@@ -75,7 +75,15 @@ class SchemaField {
 
     alias() {
         return this._prop("alias")|| this.name();
-    }    
+    } 
+    
+    tags() {
+        return this._desc['x-tags'] || [];
+    }
+
+    hasTag(t) {
+        return this.tags().includes(t);
+    }
 
     _prop(name,dft=null) {
         if(typeof this._desc[name] != "undefined")
@@ -397,8 +405,18 @@ class DbSchema
         return this._fId;
     }
 
-    fields() { 
-        return this._fields; 
+    fields(tag=null) { 
+        if(!tag)
+            return this._fields;
+
+        let fields={};
+        for(let n in this._fields)
+        {
+            let f = this._fields[n];
+            if(f.hasTag(tag))
+                fields[n]=f;
+        }
+        return fields;
     }
 
     fieldsNames() { 
