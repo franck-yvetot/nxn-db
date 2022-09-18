@@ -147,6 +147,12 @@ class DbView {
                     field2 = Object.assign({},schemaF.desc());
                 else if(this.desc.otherFields && this.desc.otherFields[n])
                     field2 = Object.assign({},this.desc.otherFields[n]);
+                else 
+                {
+                    let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+model.name();
+                    debug.error(msg);
+                    throw new Error(msg);
+                }
 
                 if(prefix)
                     field2.dbFieldPrefix = prefix;
@@ -454,6 +460,10 @@ class DbSchema
     getDefaultQuery(n) {
         return this._desc.queries && this._desc.queries[n] || null;
     }
+
+	hasView(n) {
+        return this._desc.views && this._desc.views[n];
+    }
       
     getViewDesc(n) {
         if(!this._desc.views)
@@ -527,6 +537,10 @@ class DbModelInstance
 
     collection() {
         return this._schema.collection();
+    }
+
+    hasView(n) {
+        return this._schema.hasView(n);
     }
 
     getView(n,lang=null) {
