@@ -390,7 +390,8 @@ class MySqlInstance
                         return true;
                 }
             }
-            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+table);
+            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+table+
+                " related to view "+view.name()+" in model "+model.name());
             // something went wrong
             return false;
         }
@@ -425,6 +426,12 @@ class MySqlInstance
             {
                 // missng table is the current view schema
                 const res = this.createCollection(null,model,view);
+                if(res)
+                {
+                    debug.log("Table created with success "+missingTable);
+                }
+                
+                return res;
             }
             else
                 throw new Error("cant fix SQL query or add missing table "+dbNname+"."+missingTable);
