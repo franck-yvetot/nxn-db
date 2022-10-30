@@ -13,6 +13,10 @@ class SchemaField {
         ['sqlName','dbName','dbFieldPrefix'].forEach(fn=> {if(this._meta[fn]) delete this._meta[fn] });
     }
 
+    isEnum() {
+        return false;
+    }
+
     name() {
         return this._name;
     }
@@ -91,6 +95,41 @@ class SchemaField {
 
         return dft;
     }
+
+    static build(name,desc) {
+        if(desc.enum || desc.enumValues || desc['x-dynamic-values'])
+            return new SchemaFieldEnum(name,desc);
+
+        return new SchemaField(name,desc);
+    }
+}
+
+class SchemaFieldEnum extends SchemaField {
+    constructor(name,desc) {
+        super(name,desc);
+        this.enum = desc.enum || {};
+    }
+
+    isEnum() {
+        return true;
+    }
+
+    getEnum(v,sep=",",locale) {
+        if(v.indexOf && v.indexOf('|') > -1)
+        {
+            let aV = v.split("|").filter(e => e != '').map(e => this._mapEnum(e,locale));
+            if(sep)
+                return aV.join(sep);
+
+            return aV;
+        }
+
+        return this._mapEnum(v,locale);
+    }
+
+    _mapEnum(v,locale) {
+        return locale && locale.e_(v,this._name,this.enum && this.enum[v]);
+    }
 }
 
 /** a view is based on the schema definition and alos on specific model properties
@@ -160,7 +199,7 @@ class DbView {
                 if(locale)
                     field2.label = locale.f_(n1);
     
-                this._fields[n] = new SchemaField(n,field2);
+                this._fields[n] = SchemaField.build(n,field2);
                 fmeta[n] = this._fields[n].metadata();
             });
 
@@ -191,7 +230,7 @@ class DbView {
                 if(prefix && !field.dbFieldPrefix)
                     field2.dbFieldPrefix = prefix;
     
-                this._fields[fname] = new SchemaField(fname,field2);
+                this._fields[fname] = SchemaField.build(fname,field2);
                 if(locale)
                     field2.label = locale.f_(fname);
                 else
@@ -366,7 +405,7 @@ class DbSchema
             if(_dbFieldPrefix && !field.dbFieldPrefix)
             field2.dbFieldPrefix = _dbFieldPrefix;
 
-            this._fields[fname] = new SchemaField(fname,field2);
+            this._fields[fname] = SchemaField.build(fname,field2);
             this._fieldsMeta[fname] = this._fields[fname].metadata(); 
             fnames.push(fname);
         });
@@ -461,9 +500,9 @@ class DbSchema
         return this._desc.queries && this._desc.queries[n] || null;
     }
 
-	hasView(n) {
+    hasView(n) {
         return this._desc.views && this._desc.views[n];
-    }
+    } 
       
     getViewDesc(n) {
         if(!this._desc.views)

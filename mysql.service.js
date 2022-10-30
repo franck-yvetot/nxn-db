@@ -179,6 +179,7 @@ class MySqlInstance
     _formatRecord(rec,view) {
         const format = view.getFieldsFormats();
         const locale = view.locale();
+        const schema = view.schema();
 
         if(!format)
             return  Object.assign({}, rec);
@@ -191,15 +192,16 @@ class MySqlInstance
                 // execute in reverse order
                 let v = av[i].trim();
                 const func = "_format_"+v;
+                const fdesc = schema.field(k);
                 if(typeof this[func] == "function")
-                    this[func](k,rec,locale);
+                    this[func](k,rec,fdesc,locale);
             }
         });
 
         return rec;
     }
 
-    _format_json(fname,rec) 
+    _format_json(fname,rec,fdesc,locale) 
     {
         if(rec[fname])
         {
@@ -207,7 +209,7 @@ class MySqlInstance
         }
     }
 
-    _format_base64(fname,rec) 
+    _format_base64(fname,rec,fdesc,locale) 
     {
         if(rec[fname])
         {
@@ -215,27 +217,40 @@ class MySqlInstance
         }
     }
     
-    _format_enum(fname,rec) 
+    _format_enum(fname,rec,fdesc,locale) 
     {
-        if(rec[fname] && typeof (rec[fname+'__html']) != "undefined")
+        let v = rec[fname];
+        if(v && typeof (rec[fname+'__html']) != "undefined")
         {
             rec[fname] = {
-                value:rec[fname],
+                value:v,
                 html:rec[fname+'__html']
             };
             delete rec[fname+'__html'];
         }
         else
-            return {value:rec[fname],html:''};
+        {
+            let html = v && (fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+            rec[fname] = {
+                value:v,
+                html
+            };
+        }
     }
 
-    _format_enum_static(fname,rec,locale) 
+    _format_enum_static(fname,rec,fdesc,locale) 
     {
         if(rec[fname])
         {
+            let v = rec[fname];
+            let html;
+            if(fdesc && fdesc.getEnum)
+                html = fdesc.getEnum(v,",",locale);
+
             rec[fname] = {
-                value:rec[fname],
-                html:(locale && locale.e_(rec[fname],fname)) || rec[fname]
+                value:v,
+                //html:(locale && locale.e_(rec[fname],fname)) || rec[fname]
+                html
             };
         }
     }
@@ -430,7 +445,7 @@ class MySqlInstance
                 {
                     debug.log("Table created with success "+missingTable);
                 }
-                
+
                 return res;
             }
             else
