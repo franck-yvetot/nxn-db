@@ -128,7 +128,16 @@ class SchemaFieldEnum extends SchemaField {
     }
 
     _mapEnum(v,locale) {
-        return locale && locale.e_(v,this._name,this.enum && this.enum[v]);
+        try 
+        {
+            return locale && locale.e_(v,this._name,this.enum && this.enum[v]);
+            
+        } 
+        catch (error) 
+        {
+            debug.error(error.message);
+            throw error;            
+        }
     }
 }
 
@@ -290,7 +299,7 @@ class DbView {
                         where[n]=field.dbName(fieldPrefix)+" = '$val'";
                     else
                         //debug.error("unknown field in [where] description for view "+this._name+" of model "+this.model.name());
-                        debug.error("unknown field in [where] description for view "+this._name);
+                        debug.error("unknown field in [where] description for view ["+this._name+"] of model ["+this._model.name()+"]");
                 }
             });            
         }
