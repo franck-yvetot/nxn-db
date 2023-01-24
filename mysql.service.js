@@ -281,8 +281,13 @@ class MySqlInstance
         {
             if(typeof v == "integer")
                 return v;
+
             if(v.includes && v.includes("NOW"))
                 return v.replace(/now(\s*[(]\s*[)])?/i,'NOW()');
+
+            if(v === '' || v == '-')
+                return "NULL";
+
             return "'"+v+"'";
         }
 
@@ -325,6 +330,9 @@ class MySqlInstance
                 def += "DATE";
                 if(defaultV!==null)
                     def +=  " DEFAULT "+defaultV;
+
+                // date nullable by default
+                nullable = schemaField._prop("nullable",true)                    
                 break;                    
             case 'float':
             case 'number':
