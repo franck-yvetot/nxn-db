@@ -1,108 +1,144 @@
 const debug = require("@nxn/debug")('MYSQL_SCE');
-const {configSce} = require('@nxn/boot');
+const {configSce, FlowNode} = require('@nxn/boot');
 const {objectSce} = require("@nxn/ext");
 
 const mysql = require('mysql2/promise');
 
-class MySqlInstance
+class MySqlInstance extends FlowNode
 {
-    constructor(config) 
-    {
-        if(config)
-    this.init(config);
-}
+    constructor(inst) {
+        super(inst);
+    } 
 
-    async init(config) 
+    async init(config,ctxt,...injections)
     {
-  if(!config || this.config)
-    return;
+        if(!config || this.config)
+            return;
 
-      this.config=config;
-  this.conPath = config.conPath || '.MySql';
-  }
+        super.init(config,ctxt,injections); 
+
+        this.config = config;
+        this.conPath = config.conPath || '.MySql';
+
+        this.secretManager = this.getInjection("secrets");
+        this.secretId = this.config.secret_id || "mysql";
+    }
+
+    async loadConInfo() 
+    {
+        if(this.conInfo)
+            return this.conInfo;
+
+        try 
+        {   
+            let conInfo;
+
+            if(this.secretManager)
+            {
+                this.conInfo = await this.secretManager.getEnv(this.secretId);
+            }
+            else
+            {
+                this.conInfo = configSce.loadConfig(this.conPath);
+            }
+        }   
+        catch(err) {
+            throw err;
+        }
+
+        return this.conInfo;
+    }
 
     async connect(force=false) 
     {
         if(!force && this.connected)
-        return true; 
+            return true; 
 
-    // buckets config
         try 
         {            
-        let conInfo = configSce.loadConfig(this.conPath);
+            let conInfo = await this.loadConInfo();
 
-        if(!conInfo.MYSQL_USER)
-            throw "cant find MYSQL_USER for connecting MySql instance";
-        if(!conInfo.MYSQL_PWD)
-            throw "cant find MYSQL_PWD for connecting MySql instance";
-        if(!conInfo.MYSQL_DB)
-            throw "cant find MYSQL_DB for connecting MySql instance";
-        if(!conInfo.MYSQL_HOST)
-            throw "cant find MYSQL_HOST for connecting MySql instance";
+            if(!conInfo.MYSQL_USER)
+                throw "cant find MYSQL_USER for connecting MySql instance";
+            if(!conInfo.MYSQL_PWD)
+                throw "cant find MYSQL_PWD for connecting MySql instance";
+            if(!conInfo.MYSQL_DB)
+                throw "cant find MYSQL_DB for connecting MySql instance";
+            if(!conInfo.MYSQL_HOST)
+                throw "cant find MYSQL_HOST for connecting MySql instance";
 
-        const host = conInfo.MYSQL_HOST;
-        const port   = conInfo.MYSQL_PORT || 3306;
-        const dbName = conInfo.MYSQL_DB;
+            const host = conInfo.MYSQL_HOST;
+            const port   = conInfo.MYSQL_PORT || 3306;
+            const dbName = conInfo.MYSQL_DB;
 
-        // Database Name
-        try {
-            // Use connect method to connect to the Server
-            this.con = await mysql.createConnection({
-                host: host, port:port,
-                user: conInfo.MYSQL_USER, password:conInfo.MYSQL_PWD,
-                database: dbName
-              });
+            // Database Name
+            try 
+            {
+                // Use connect method to connect to the Server
+                this.con = await mysql.createConnection({
+                    host: host, port:port,
+                    user: conInfo.MYSQL_USER, password:conInfo.MYSQL_PWD,
+                    database: dbName
+                });
 
-          } catch (err) {
-            debug.error(err.stack);
-          }
-                
-        if(this.con)
-            debug.log("MySql instance connected on db "+dbName);
-        else
-            throw "cant connect MySql instance "+dbName;
+            } 
+            catch (err) 
+            {
+                debug.error(err.stack);
+            }
+                    
+            if(this.con)
+                debug.log("MySql instance connected on db "+dbName);
+            else
+                throw "cant connect MySql instance "+dbName;
 
-        this.connected = true;
-        return true;
-    }
-    catch(err) {
-        debug.error(`cant connect to MySql instance `+err);
-        return Promise.reject({error:500,error:"cant conect to MySql "+err});
-    }
-}  
+            this.connected = true;
+            return true;
+        }
+        catch(err) {
+            debug.error(`cant connect to MySql instance `+err);
+            return Promise.reject({error:500,error:"cant conect to MySql "+err});
+        }
+    }  
 
     async close() 
     {
-  if(this.connected)
-  {
-    this.connected = false;
-    const con = this.con;
-    await con.end();
-  }
-}
+        if(this.connected)
+        {
+            this.connected = false;
+            const con = this.con;
+            await con.end();
+        }
+    }
 
     async query(q,view=null,values=null,reconnect=false) 
     {
         await this.connect(reconnect);
 
-    let res;
+        let res;
         
-        try {
-    if(values)
-      res = await this.con.execute(q,values);
-    else
-      res = await this.con.query(q);
+        try 
+        {
+            if(values)
+                res = await this.con.execute(q,values);
+            else
+                res = await this.con.query(q);
         } 
         catch (error) 
         {
-                debug.error("ERROR in MYSQL query "+q);
+            debug.error("ERROR in MYSQL query "+q);
             debug.error("ERROR message "+error.message);
 
             if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
-                {
-                    debug.error("try reconnecting...");
+            {
+                debug.error("try reconnecting...");
                 return this.query(q,view,values,true);
             }
+            if(error.code == 'ECONNABORTED')
+            {
+                debug.error("MYSQL Connection error, reconnecting...");
+                return this.query(q,view,values,false);
+            }                         
             if(error.code == 'ER_BAD_FIELD_ERROR')
             {
                 debug.error("try adding new field...");
@@ -129,22 +165,24 @@ class MySqlInstance
 
   /* ============ PRIVATE METHODS ================= */
 
-    _mapWhere(query,view,withTablePrefix=true) {
-    var where = "";
+    _mapWhere(query,view,withTablePrefix=true) 
+    {
+        var where = "";
 
         const schema = view.schema();
 
-    if(query)
+        if(query)
         {
             const prefix = schema.fieldPrefix();
 
             let aWhere = [];
-        objectSce.forEachSync(query, (value,name)=> {
-                    const fw = view.getFieldWhere(name,value,withTablePrefix);
+            objectSce.forEachSync(query, (value,name)=> 
+            {
+                const fw = view.getFieldWhere(name,value,withTablePrefix);
                 if(fw)
                     aWhere.push(fw);
                 // where += " "+prefix+name + "='"+value+"'";
-        });
+            });
 
             if(aWhere.length)
                 where = "WHERE "+aWhere.join(" AND ");
@@ -152,18 +190,19 @@ class MySqlInstance
                 where = "";
         }
 
-    return where;
-}
-
-    _mapLimit(limit=0,skip=0) {
-    let s='';
-    if(limit) 
-    {
-            s = " LIMIT "+skip+","+limit;
+        return where;
     }
 
-    return s;
-}
+    _mapLimit(limit=0,skip=0) 
+    {
+        let s='';
+        if(limit) 
+        {
+            s = " LIMIT "+skip+","+limit;
+        }
+
+        return s;
+    }
 
     _buildQuery(view, viewName,defaultQuery,map) {
         let qs = (view && view.getQuery(viewName)) || (this.config.queries && this.config.queries[viewName]) 
