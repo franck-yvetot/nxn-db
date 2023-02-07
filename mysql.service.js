@@ -120,8 +120,6 @@ class MySqlInstance extends FlowNode
 
             let params = 
             {
-                host: conInfo.MYSQL_HOST, 
-                port: conInfo.MYSQL_PORT || 3306,
                 user: conInfo.MYSQL_USER, 
                 password:conInfo.MYSQL_PWD,
                 database
@@ -132,6 +130,11 @@ class MySqlInstance extends FlowNode
                 // e.g. '/cloudsql/project:region:instance'
                 // ex. '/cloudsql/presence-talents:europe-west1:presence-talents-preprod56'
                 params.socketPath = conInfo.MYSQL_SOCKET_PATH
+            else
+            {
+                params.host = conInfo.MYSQL_HOST;
+                params.port = conInfo.MYSQL_PORT || 3306;
+            }
 
             // Database Name
             try 
@@ -145,9 +148,9 @@ class MySqlInstance extends FlowNode
             }
                     
             if(this.con)
-                debug.log("MySql instance connected on db "+database);
+                debug.log("MYSQL CONNECTED TO DB: "+database);
             else
-                throw "cant connect MySql instance "+database;
+                throw "MYSQL CANT CONNECT TO DB :"+database;
 
             this.connected = true;
             return this.con;
