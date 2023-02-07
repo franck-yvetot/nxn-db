@@ -141,6 +141,7 @@ class MySqlInstance extends FlowNode
             {
                 params.connectTimeout = conInfo.MYSQL_TIMEOUT;
                 // params.waitForConnections = true;
+                
             }
 
             // Database Name
