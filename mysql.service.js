@@ -113,8 +113,6 @@ class MySqlInstance extends FlowNode
                 throw "cant find MYSQL_PWD for connecting MySql instance";
             if(!conInfo.MYSQL_DB)
                 throw "cant find MYSQL_DB for connecting MySql instance";
-            if(!conInfo.MYSQL_HOST)
-                throw "cant find MYSQL_HOST for connecting MySql instance";
 
             let database = conInfo.MYSQL_DB;
 
@@ -132,8 +130,17 @@ class MySqlInstance extends FlowNode
                 params.socketPath = conInfo.MYSQL_SOCKET_PATH
             else
             {
+                if(!conInfo.MYSQL_HOST)
+                    throw "cant find MYSQL_HOST for connecting MySql instance";
+                
                 params.host = conInfo.MYSQL_HOST;
                 params.port = conInfo.MYSQL_PORT || 3306;
+            }
+
+            if(conInfo.MYSQL_TIMEOUT) 
+            {
+                params.connectTimeout = conInfo.MYSQL_TIMEOUT;
+                // params.waitForConnections = true;
             }
 
             // Database Name
