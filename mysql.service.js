@@ -123,11 +123,16 @@ class MySqlInstance extends FlowNode
                 database
             };
 
+            let conMsg = " ";
+
             // for cloud run
             if(conInfo.MYSQL_SOCKET_PATH)
+            {
                 // e.g. '/cloudsql/project:region:instance'
                 // ex. '/cloudsql/presence-talents:europe-west1:presence-talents-preprod56'
-                params.socketPath = conInfo.MYSQL_SOCKET_PATH
+                params.socketPath = conInfo.MYSQL_SOCKET_PATH;
+                conMsg += " SOCKET "+params.socketPath;
+            }
             else
             {
                 if(!conInfo.MYSQL_HOST)
@@ -135,13 +140,13 @@ class MySqlInstance extends FlowNode
                 
                 params.host = conInfo.MYSQL_HOST;
                 params.port = conInfo.MYSQL_PORT || 3306;
+                conMsg += " Host "+params.host+":"+params.port;
             }
 
             if(conInfo.MYSQL_TIMEOUT) 
             {
                 params.connectTimeout = conInfo.MYSQL_TIMEOUT;
-                // params.waitForConnections = true;
-                
+                // params.waitForConnections = true;                
             }
 
             // Database Name
@@ -156,14 +161,15 @@ class MySqlInstance extends FlowNode
             }
                     
             if(this.con)
-                debug.log("MYSQL CONNECTED TO DB: "+database);
+                debug.log("MYSQL CONNECTED TO DB: "+database+conMsg);
             else
-                throw "MYSQL CANT CONNECT TO DB :"+database;
+                throw "MYSQL CANT CONNECT TO DB :"+database+conMsg;
 
             this.connected = true;
             return this.con;
         }
-        catch(err) {
+        catch(err) 
+        {
             debug.error(`cant connect to MySql instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
         }
