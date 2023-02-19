@@ -6,8 +6,10 @@ const mysql = require('mysql2/promise');
 
 let pools = {};
 
+// MySQL Handler :  base class for connection and connection pool versions
 class MySqlHandlerBase
 {
+    // process connection config and create parameters for MySQL
     buildParams(conInfo,isPool=false) 
     {
         if(!conInfo.MYSQL_USER)
@@ -63,6 +65,9 @@ class MySqlHandlerBase
         return {params,message};
     }
 
+    // execute the query ("execute" for INSERT/UPDATE/REPLACE/PATCH, "query" for SELECT/DELETE)
+    // manage reuse of same connection for "SELECT SQL_CALC_FOUND_ROWS" (nb of rows is kept in con object by MySQL)
+    // for that : callback is called if provided, with the con object
     async query(q,view=null,values=null,reconnect=false,cb=null,con=null)
     {
         let res;
@@ -106,6 +111,7 @@ class MySqlHandlerBase
 
 }
 
+// MySQL Handler :  pooled version
 class MySqlPool extends MySqlHandlerBase
 {
     constructor() 
@@ -148,29 +154,7 @@ class MySqlPool extends MySqlHandlerBase
             debug.error(`cant connect to MySql pool instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
         }
-    }    
-
-    /*
-    async createPool(conInfo) 
-    {
-        const host =  conInfo.MYSQL_HOST;
-        const port   =  conInfo.MYSQL_PORT || 3306;
-        const password =  conInfo.MYSQL_PWD;
-        const database =  conInfo.MYSQL_DB;
-        const user =  conInfo.MYSQL_USER;
-
-        this.pool = mysql.createPool(
-        {
-            connectionLimit: 100,
-            host,
-            port,
-            user,
-            password,
-            database,
-            debug: false
-        });
     }
-    */
 
     async getCon() 
     {
@@ -192,6 +176,8 @@ class MySqlPool extends MySqlHandlerBase
     }    
 }
 
+// MySQL Handler :  simple connection version
+// NB. this version is less efficient than pooled version
 class MySqlCon extends MySqlHandlerBase
 {
     constructor() 
