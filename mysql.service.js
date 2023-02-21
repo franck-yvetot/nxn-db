@@ -125,8 +125,8 @@ class MySqlPool extends MySqlHandlerBase
         if(!force && this.connected)
             return this.con; 
 
-        try 
-        {            
+        try
+        {     
             let {params,message} = this.buildParams(conInfo,true);
 
             // Database Name
@@ -148,7 +148,7 @@ class MySqlPool extends MySqlHandlerBase
             this.connected = true;
             return this.pool;
         }
-        catch(err) 
+        catch(err)
         {
             debug.error(`cant connect to MySql pool instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
@@ -215,7 +215,7 @@ class MySqlCon extends MySqlHandlerBase
             this.connected = true;
             return this.con;
         }
-        catch(err) 
+        catch(err)
         {
             debug.error(`cant connect to MySql instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
@@ -333,7 +333,7 @@ class MySqlInstance extends FlowNode
 
             return await conHandler.query(q,view,values,reconnect,cb,con);
         }
-        catch (error) 
+        catch (error)
         {
             await this._processError(error,q,view,values,cb,con);
 
