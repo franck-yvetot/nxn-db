@@ -71,7 +71,6 @@ class MySqlHandlerBase
     async query(q,view=null,values=null,reconnect=false,cb=null,con=null)
     {
         let res;
-        
         try 
         {
             if(!con)
@@ -96,11 +95,11 @@ class MySqlHandlerBase
             debug.error("ERROR message "+error.message);
 
             throw error;
-        }
+        }  
         finally 
         {
             this.releaseCon(con);
-        }
+        }          
     
         if(res.insertId)
             return res.insertId;
@@ -317,85 +316,6 @@ class MySqlInstance extends FlowNode
         }        
     }
 
-    /*
-    async connectX(force=false) 
-    {
-        if(!force && this.connected)
-            return this.con; 
-
-        try 
-        {            
-            let conInfo = await this.loadConInfo();
-
-            if(!conInfo.MYSQL_USER)
-                throw "cant find MYSQL_USER for connecting MySql instance";
-            if(!conInfo.MYSQL_PWD)
-                throw "cant find MYSQL_PWD for connecting MySql instance";
-            if(!conInfo.MYSQL_DB)
-                throw "cant find MYSQL_DB for connecting MySql instance";
-
-            let database = conInfo.MYSQL_DB;
-
-            let params = 
-            {
-                user: conInfo.MYSQL_USER, 
-                password:conInfo.MYSQL_PWD,
-                database
-            };
-
-            let conMsg = " ";
-
-            // for cloud run
-            if(conInfo.MYSQL_SOCKET_PATH)
-            {
-                // e.g. '/cloudsql/project:region:instance'
-                // ex. '/cloudsql/presence-talents:europe-west1:presence-talents-preprod56'
-                params.socketPath = conInfo.MYSQL_SOCKET_PATH;
-                conMsg += " SOCKET "+params.socketPath;
-            }
-            else
-            {
-                if(!conInfo.MYSQL_HOST)
-                    throw "cant find MYSQL_HOST for connecting MySql instance";
-                
-                params.host = conInfo.MYSQL_HOST;
-                params.port = conInfo.MYSQL_PORT || 3306;
-                conMsg += " Host "+params.host+":"+params.port;
-            }
-
-            if(conInfo.MYSQL_TIMEOUT) 
-            {
-                params.connectTimeout = conInfo.MYSQL_TIMEOUT;
-                // params.waitForConnections = true;                
-            }
-
-            // Database Name
-            try 
-            {
-                // Use connect method to connect to the Server
-                this.con = await mysql.createConnection(params);
-            } 
-            catch (err) 
-            {
-                debug.error(err.stack);
-            }
-                    
-            if(this.con)
-                debug.log("MYSQL CONNECTED TO DB: "+database+conMsg);
-            else
-                throw "MYSQL CANT CONNECT TO DB :"+database+conMsg;
-
-            this.connected = true;
-            return this.con;
-        }
-        catch(err) 
-        {
-            debug.error(`cant connect to MySql instance `+err);
-            return Promise.reject({error:500,error:"cant conect to MySql "+err});
-        }
-    }
-    */
-
     async close()
     {
         if(this.conHandler)
@@ -411,73 +331,23 @@ class MySqlInstance extends FlowNode
         {
             let conHandler = await this.connect(reconnect);
 
-            return conHandler.query(q,view,values,reconnect,cb,con);
+            return await conHandler.query(q,view,values,reconnect,cb,con);
         }
         catch (error) 
         {
-            this._processError(error,q,view,values,cb,con);
+            await this._processError(error,q,view,values,cb,con);
 
             throw error;
         }
-
-        /*
-        let con = await this.connect(reconnect);
-
-        let res;
-        
-        try 
-        {
-            if(values)
-                res = await con.execute(q,values);
-            else
-                res = await con.query(q);
-        } 
-        catch (error) 
-        {
-            debug.error("ERROR in MYSQL query "+q);
-            debug.error("ERROR message "+error.message);
-
-            if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
-            {
-                debug.error("try reconnecting...");
-                return this.query(q,view,values,true);
-            }
-            if(error.code == 'ECONNABORTED')
-            {
-                debug.error("MYSQL Connection error, reconnecting...");
-                return this.query(q,view,values,false);
-            }                         
-            if(error.code == 'ER_BAD_FIELD_ERROR')
-            {
-                debug.error("try adding new field...");
-                const isOk = await this._fixMissingField(error,view);
-                if(isOk)
-                    return this.query(q,view,values,false);
-            }
-            if(error.code == 'ER_NO_SUCH_TABLE')
-            {
-                debug.error("try adding new table...");
-                const isOk = await this._fixMissingTable(error,view);
-                if(isOk)
-                    return this.query(q,view,values,false);
-            }
-        
-            throw error;            
-        }
-    
-        if(res.insertId)
-            return res.insertId;
-
-        const [rows, fields] = res;     
-        return rows;
-        */
     }
 
   /* ============ PRIVATE METHODS ================= */
 
   async _processError(error,q,view,values,cb,con) 
   {
-      if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
+      if(error.message == "Can't add new command when connection is in closed state" 
+        || error.code == 'ETIMEDOUT'
+        || error.code == 'EPIPE')
       {
           debug.error("try reconnecting...");
           return this.query(q,view,values,true,cb);
@@ -988,16 +858,23 @@ class MySqlInstance extends FlowNode
                 }
         );
 
-        let nbdocs;
-        let data = await this.query(qs,view,null,false,
-            async (res,con) =>
-            {
-                // reuse same con for getting the nb of selected rows that is kept in connection object
-                nbdocs = await con.query("SELECT FOUND_ROWS() as nbrecords",null,null,false);
-            });
-            
-        if(this.config.log)
-            debug.log(qs + " -> nb = " + data.length+ " / $view="+view.name());
+        let nbdocs,data;
+        try 
+        {
+            data = await this.query(qs,view,null,false,
+                async (res,con) =>
+                {
+                    // reuse same con for getting the nb of selected rows that is kept in connection object
+                    nbdocs = await con.query("SELECT FOUND_ROWS() as nbrecords",null,null,false);
+                });
+                
+            if(this.config.log)
+                debug.log(qs + " -> nb = " + data.length+ " / $view="+view.name());    
+        }
+        catch(error) 
+        {
+            debug.error(error);
+        }
 
         const nb = nbdocs[0].nbrecords;
         let pages=null;
