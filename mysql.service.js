@@ -543,13 +543,17 @@ class MySqlInstance extends FlowNode
     {
         let v = rec[fname];
         let html = v || "";
-        let format = fdesc._prop("x-enum-reg-format");
-        if(format)
+
+        if(html)
         {
-            let pattern = format.reg;
-            let regEx = new RegExp(pattern, "gm");
-            let rep = format.html;
-            html = v.replace(regEx,rep) || v || "";
+            let format = fdesc._prop("x-enum-reg-format");
+            if(format)
+            {
+                let pattern = format.reg;
+                let regEx = new RegExp(pattern, "gm");
+                let rep = format.html;
+                html = v.replace(regEx,rep) || v || "";
+            }    
         }
 
         rec[fname] = {
