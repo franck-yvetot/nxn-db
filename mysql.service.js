@@ -125,8 +125,8 @@ class MySqlPool extends MySqlHandlerBase
         if(!force && this.connected)
             return this.con; 
 
-        try
-        {     
+        try 
+        {            
             let {params,message} = this.buildParams(conInfo,true);
 
             // Database Name
@@ -148,7 +148,7 @@ class MySqlPool extends MySqlHandlerBase
             this.connected = true;
             return this.pool;
         }
-        catch(err)
+        catch(err) 
         {
             debug.error(`cant connect to MySql pool instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
@@ -215,7 +215,7 @@ class MySqlCon extends MySqlHandlerBase
             this.connected = true;
             return this.con;
         }
-        catch(err)
+        catch(err) 
         {
             debug.error(`cant connect to MySql instance `+err);
             return Promise.reject({error:500,error:"cant conect to MySql "+err});
@@ -333,12 +333,64 @@ class MySqlInstance extends FlowNode
 
             return await conHandler.query(q,view,values,reconnect,cb,con);
         }
-        catch (error)
+        catch (error) 
         {
             await this._processError(error,q,view,values,cb,con);
 
             throw error;
         }
+
+        /*
+        let con = await this.connect(reconnect);
+
+        let res;
+        
+        try 
+        {
+            if(values)
+                res = await con.execute(q,values);
+            else
+                res = await con.query(q);
+        } 
+        catch (error) 
+        {
+            debug.error("ERROR in MYSQL query "+q);
+            debug.error("ERROR message "+error.message);
+
+            if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
+            {
+                debug.error("try reconnecting...");
+                return this.query(q,view,values,true);
+            }
+            if(error.code == 'ECONNABORTED')
+            {
+                debug.error("MYSQL Connection error, reconnecting...");
+                return this.query(q,view,values,false);
+            }                         
+            if(error.code == 'ER_BAD_FIELD_ERROR')
+            {
+                debug.error("try adding new field...");
+                const isOk = await this._fixMissingField(error,view);
+                if(isOk)
+                    return this.query(q,view,values,false);
+            }
+            if(error.code == 'ER_NO_SUCH_TABLE')
+            {
+                debug.error("try adding new table...");
+                const isOk = await this._fixMissingTable(error,view);
+                if(isOk)
+                    return this.query(q,view,values,false);
+            }
+        
+            throw error;            
+        }
+    
+        if(res.insertId)
+            return res.insertId;
+
+        const [rows, fields] = res;     
+        return rows;
+        */
     }
 
   /* ============ PRIVATE METHODS ================= */
@@ -486,6 +538,35 @@ class MySqlInstance extends FlowNode
             };
         }
     }
+
+    _format_enum_reg(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        let html = v || "";
+        let format = fdesc._prop("x-enum-reg-format");
+        if(format)
+        {
+            let pattern = format.reg;
+            let regEx = new RegExp(pattern, "gm");
+            let rep = format.html;
+            html = v.replace(regEx,rep) || v || "";
+        }
+
+        rec[fname] = {
+            value:v,
+            html
+        };
+    }
+
+    _format_enum_upper_initial_html(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        if(v.html)
+            v.html = v.html
+                .split(' ')
+                .map(mot => mot.charAt(0).toUpperCase() + mot.slice(1).toLowerCase())
+                .join(' ');
+    }    
 
     _format_enum_static(fname,rec,fdesc,locale) 
     {
