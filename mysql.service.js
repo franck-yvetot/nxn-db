@@ -399,6 +399,7 @@ class MySqlInstance extends FlowNode
   {
       if(error.message == "Can't add new command when connection is in closed state" 
         || error.code == 'ETIMEDOUT'
+        || error.code == 'PROTOCOL_CONNECTION_LOST'
         || error.code == 'EPIPE')
       {
           debug.error("try reconnecting...");
@@ -424,6 +425,7 @@ class MySqlInstance extends FlowNode
               return this.query(q,view,values,false,cb,con);
       }
       
+      debug.error("Other MYSQL Error (not managed by MYSQLSce) "+error.code);
       throw error;
     }    
 
