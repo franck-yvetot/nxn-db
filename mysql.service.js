@@ -867,16 +867,19 @@ class MySqlInstance extends FlowNode
         return true;
     }
 
-    getEmpty(options,model) 
+    getEmpty(options,model,doc=null) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
 
-        let data={};
+        let data= doc || {};
         objectSce.forEachSync(view.fields(),(f,n) => {
-            data[n] = 
-            (f.type=='string') ? '' :
-            (f.type=='integer') ? 0  : 
-            '';
+
+            data[n] = data[n] ||
+                (
+                    (f.type=='string') ? '' :
+                    (f.type=='integer') ? 0  : 
+                    ''
+                );
         });
 
         data = this._formatRecord(data,view);

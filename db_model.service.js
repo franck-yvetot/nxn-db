@@ -641,8 +641,8 @@ class DbModelInstance
         return this._db.findOne(where,options,this);
     }
 
-    getEmpty(options={}) {
-        return this._db.getEmpty(options,this);
+    getEmpty(options={},initData=null) {
+        return this._db.getEmpty(options,this,initData);
     }
 
     async find(where={},options={}) {
