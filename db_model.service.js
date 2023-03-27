@@ -1,7 +1,7 @@
 const debug = require("@nxn/debug")('DbModel');
 const {objectSce} = require("@nxn/ext");
 const { Timestamp } = require("mongodb");
-const invalidParam = (s) => { throw new Exception(s); }
+const invalidParam = (s) => { throw new Error(s); }
 const FlowNode = require("@nxn/boot/node");
 
 class SchemaField {
@@ -141,11 +141,14 @@ class SchemaFieldEnum extends SchemaField {
     }
 }
 
+
+
 /** a view is based on the schema definition and alos on specific model properties
  *  A view defined in the schema, can have different properties (ex. field names of the database) 
  *  for each model instance.
  */
-class DbView {
+class DbView 
+{
     constructor(name,desc,model,lang=null) 
     {
         this.desc = desc;
@@ -153,6 +156,7 @@ class DbView {
         this._model = model;
         const schema = this._schema = model.schema();
         const locale = this._locale = model.locale(lang);
+        this._db = model.db();
 
         // get fields in config or from schema
         const meta = this._schema.metadata();
@@ -255,10 +259,17 @@ class DbView {
         }
         }
 
+        // defines how to format where clauses to be used by db hnadlers
+        this.fieldWhere = this._db.fieldWhere || 
+            ((fname,operator='=',valueStr='$value') => {
+                return fname +" "+ operator +" '$value'";
+        })
+
         // get where clause
         let w = {...desc.where};
         this.desc.wherePrefix = this._getWhere(w,prefix); // with full table/field prefix aka T1._
         this.desc.whereNoTablePrefix = this._getWhere(w,this._dbFieldPrefixNoTable); // with only field prefix aka _
+
 
         // get internal db names with prefix if any
         this._dbFnames = aFnames.map(n=>
@@ -286,20 +297,21 @@ class DbView {
         let where;
 
         if(!whereDesc)
-            where = aFnames.map(n=>this._fields[n].dbName(fieldPrefix)+" = '$value'");
-        else {
+            where = aFnames.map(n=>this.this.fieldWhere(this._fields[n].dbName(fieldPrefix),"=",'$value'));
+        else 
+        {
             where = {};
-            objectSce.forEachSync(whereDesc,(v,n)=> {
+            objectSce.forEachSync(whereDesc,(v,n)=> 
+            {
                 if(typeof v == "string")
                     where[n]=v;
                 else if(v)
                 {
                     let field = this._fields[n] || this._schema.field(n);
                     if(field)
-                        where[n]=field.dbName(fieldPrefix)+" = '$val'";
+                        where[n]=this.fieldWhere(field.dbName(fieldPrefix),"=","'$val'");
                     else
-                        //debug.error("unknown field in [where] description for view "+this._name+" of model "+this.model.name());
-                        debug.error("unknown field in [where] description for view ["+this._name+"] of model ["+this._model.name()+"]");
+                        debug.error("unknown field "+n+" in [where] description for view ["+this._name+"] of model ["+this._model.name()+"]");
                 }
             });            
         }
@@ -356,6 +368,7 @@ class DbView {
         return this._schema.getDefaultQuery(name);
     }
 
+    // map $value => actual value in where string of the form fname = '$value'
     getFieldWhere(fname,val,tablePrefix=true) {
         if(typeof val == "object" && typeof val.value != "undefined")
             val = val.value;
@@ -433,7 +446,7 @@ class DbSchema
             if(fId)
                 this._fId = fId.name();
             else
-                invalidParam("No id field in schema");
+                invalidParam("No id field in schema "+this._name);
         }
 
         // collection/table
@@ -641,8 +654,8 @@ class DbModelInstance
         return this._db.findOne(where,options,this);
     }
 
-    getEmpty(options={},initData=null) {
-        return this._db.getEmpty(options,this,initData);
+    getEmpty(options={}) {
+        return this._db.getEmpty(options,this);
     }
 
     async find(where={},options={}) {

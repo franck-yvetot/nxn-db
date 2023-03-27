@@ -339,58 +339,6 @@ class MySqlInstance extends FlowNode
 
             throw error;
         }
-
-        /*
-        let con = await this.connect(reconnect);
-
-        let res;
-        
-        try 
-        {
-            if(values)
-                res = await con.execute(q,values);
-            else
-                res = await con.query(q);
-        } 
-        catch (error) 
-        {
-            debug.error("ERROR in MYSQL query "+q);
-            debug.error("ERROR message "+error.message);
-
-            if(error.message == "Can't add new command when connection is in closed state" || error.code == 'EPIPE')
-            {
-                debug.error("try reconnecting...");
-                return this.query(q,view,values,true);
-            }
-            if(error.code == 'ECONNABORTED')
-            {
-                debug.error("MYSQL Connection error, reconnecting...");
-                return this.query(q,view,values,false);
-            }                         
-            if(error.code == 'ER_BAD_FIELD_ERROR')
-            {
-                debug.error("try adding new field...");
-                const isOk = await this._fixMissingField(error,view);
-                if(isOk)
-                    return this.query(q,view,values,false);
-            }
-            if(error.code == 'ER_NO_SUCH_TABLE')
-            {
-                debug.error("try adding new table...");
-                const isOk = await this._fixMissingTable(error,view);
-                if(isOk)
-                    return this.query(q,view,values,false);
-            }
-        
-            throw error;            
-        }
-    
-        if(res.insertId)
-            return res.insertId;
-
-        const [rows, fields] = res;     
-        return rows;
-        */
     }
 
   /* ============ PRIVATE METHODS ================= */
@@ -455,6 +403,12 @@ class MySqlInstance extends FlowNode
         }
 
         return where;
+    }
+
+    // map field OP value
+    fieldWhere(fname,operator='=',valueStr='$value') 
+    {
+        return fname +" "+ operator +" '$value'";
     }
 
     _mapLimit(limit=0,skip=0) 
@@ -867,19 +821,16 @@ class MySqlInstance extends FlowNode
         return true;
     }
 
-    getEmpty(options,model,doc=null) 
+    getEmpty(options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
 
-        let data= doc || {};
+        let data={};
         objectSce.forEachSync(view.fields(),(f,n) => {
-
-            data[n] = data[n] ||
-                (
-                    (f.type=='string') ? '' :
-                    (f.type=='integer') ? 0  : 
-                    ''
-                );
+            data[n] = 
+            (f.type=='string') ? '' :
+            (f.type=='integer') ? 0  : 
+            '';
         });
 
         data = this._formatRecord(data,view);
@@ -1044,7 +995,8 @@ class MySqlInstance extends FlowNode
             debug.log(qs+ " / $view="+view.name());
 
         const docs = await this.query(qs,view);
-    return docs;
+
+        return docs;
     }
 
     async insertOne(doc,options,model) 
@@ -1095,21 +1047,22 @@ class MySqlInstance extends FlowNode
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    if(docs.length == 0)
-        return null;
-   
-    const doc = docs[0];
+        if(docs.length == 0)
+            return null;
+    
+        const doc = docs[0];
         let fields = view.fields();
-    let fnames = [];
+        let fnames = [];
         objectSce.forEachSync(fields,(field,name)=> {
-        fnames.push(name);
-    });
-   
-    let aValues = [];
+            fnames.push(name);
+        });
+    
+        let aValues = [];
         docs.forEach(doc => 
         {
-        let values = [];
-            objectSce.forEachSync(fields,(field,name)=> {
+            let values = [];
+            objectSce.forEachSync(fields,(field,name)=> 
+            {
                 let v;
                 if(typeof doc[name] == "undefined")
                     v = this._parseValue(field.default(),field);
@@ -1137,7 +1090,7 @@ class MySqlInstance extends FlowNode
     
         const res= await this.query(qs,view);
         return res;
-}
+    }
 
     async updateOne(query,doc,addIfMissing=false,options,model) {
 
@@ -1145,11 +1098,12 @@ class MySqlInstance extends FlowNode
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
         let fields = view.fields();
-    let values = [];
+        
+        let values = [];
         let fnames = [];
         objectSce.forEachSync(fields,(field,name)=> 
         {
-        fnames.push(name);
+            fnames.push(name);
 
             let v;
             if(typeof doc[name] == "undefined")
@@ -1158,7 +1112,7 @@ class MySqlInstance extends FlowNode
                 v = this._parseValue(doc[name],field);
 
             values.push(v);
-    });
+        });
 
         let qlimit,skip,limit;
         if(options.limit)
