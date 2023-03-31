@@ -165,16 +165,16 @@ class DbView
         const aPrefix = prefix.split('.');
         if(aPrefix.length>1)
         {
+            // prefix includes table name F._
             this._dbTableAlias = aPrefix[0];
             this._dbFieldPrefixNoTable =  aPrefix[1];
         }
         else
         {
+            // simple field prefix _
             this._dbTableAlias = null;
             this._dbFieldPrefixNoTable = prefix;
         }
-
-        let fmeta = {};
 
         this._fields = {};
         this._fnames = "";
@@ -183,87 +183,40 @@ class DbView
         if(typeof desc.fields == "string") 
         {
             // CSV => get field description from schema
-
-            if(desc.fields == '*' || desc.fields == '')
-                desc.fields = schema.fieldsNames();
-
-            this._fnames = desc.fields.split(',').map(n=>n.trim()).join(',');
-            aFnames = this._fnames.split(',');
-
-            this._fnames.split(',').map(n1=>{
-                const n = n1.trim();
-                let schemaF = schema.field(n);
-                let field2;
-
-                if(schemaF)
-                    field2 = Object.assign({},schemaF.desc());
-                else if(this.desc.otherFields && this.desc.otherFields[n])
-                    field2 = Object.assign({},this.desc.otherFields[n]);
-                else 
-                {
-                    let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+model.name();
-                    debug.error(msg);
-                    throw new Error(msg);
-                }
-
-                if(prefix)
-                    field2.dbFieldPrefix = prefix;
-
-                if(locale)
-                    field2.label = locale.f_(n1);
-    
-                this._fields[n] = SchemaField.build(n,field2);
-                fmeta[n] = this._fields[n].metadata();
-            });
-
-            this._metadata = {fields:fmeta};
+            // and "otherFields" list for completing/modifying schema props
+            aFnames = this._setFieldFromCSV(desc,schema,locale,prefix);
         }
         else 
         {
             let fields;
+
+            // get fields
             if(typeof desc.fields == "object")
                 fields = desc.fields;
             else if(typeof desc.fields == "function")
                 fields = desc.fields();
 
-            if(typeof this.desc.otherFields == "object")
-                fields = {...fields,...this.desc.otherFields};
+            // complete with otherFields collection
+            let otherFields = desc.otherFields || desc["other-fields"];
+
+            if(typeof otherFields == "object")
+                fields = {...fields,...otherFields};
 
             if(fields)
-        {
-            // get fields from config
-
-            this._fnames = "";
-            let meta = {};
-
-            // Object => get fields from description
-                objectSce.forEachSync(fields,(field,fname)=>{
-                let field2 = Object.assign({},field);
-    
-                if(prefix && !field.dbFieldPrefix)
-                    field2.dbFieldPrefix = prefix;
-    
-                this._fields[fname] = SchemaField.build(fname,field2);
-                if(locale)
-                    field2.label = locale.f_(fname);
-                else
-                    if(!field.label)
-                        field.label = this._fields[fname].label();
-
-                meta[fname]=this._fields[fname].metadata();
-                aFnames.push(fname);
-            });
-
-            this._fnames = aFnames.join(",");
-            this._metadata = {fields:meta};
-        }
+            {
+                // get fields from config
+                aFnames = this._setFieldsFromDesc(fields,locale,prefix);
+            }
         }
 
         // defines how to format where clauses to be used by db hnadlers
-        this.fieldWhere = this._db.fieldWhere || 
-            ((fname,operator='=',valueStr='$value') => {
-                return fname +" "+ operator +" '$value'";
-        })
+        this.fieldWhere = 
+            this._db.fieldWhere
+                ||
+                ((fname,operator='=',valueStr='$value') => 
+                {
+                    return fname +" "+ operator +" '$value'";
+                });
 
         // get where clause
         let w = {...desc.where};
@@ -291,6 +244,111 @@ class DbView
         if(this.desc.format) {
             this._format = this.desc.format;
         }
+    }
+
+    _setFieldFromCSV(viewDesc,schema,locale,prefix) 
+    {
+        let fmeta = {};
+        let otherFnames=[];
+
+        // CSV => get field description from schema
+
+        // fields: "*"
+        if(viewDesc.fields == '*' || viewDesc.fields == '')
+            viewDesc.fields = schema.fieldsNames();
+
+        let aFnames = viewDesc.fields.split(',').map(n=>n.trim());
+
+        let otherFields = viewDesc.otherFields || viewDesc["other-fields"];
+        if(otherFields && typeof otherFields == "object") 
+        {
+            otherFnames = Object.keys(otherFields);
+            // get unique array from fields and otherFields
+            aFnames = [...new Set([...aFnames,...otherFnames])];
+        }
+
+        // extract field names
+        this._fnames = aFnames.join(',');
+        aFnames = this._fnames.split(',');
+
+        // get field descs from shema
+        this._fnames.split(',').map(n1=>
+        {
+            // get schema field
+            const n = n1.trim();
+            let schemaF = schema.field(n);
+            let field2;
+
+            // get field desc from "otherFields" list (allow to complete or modify schema fields descs)
+            if(otherFields && otherFields[n])                
+                field2 = Object.assign({},otherFields[n]);
+            else if(schemaF)
+                // or from schema
+                field2 = Object.assign({},schemaF.desc());
+            else 
+            {
+                // or error
+                let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+model.name();
+                debug.error(msg);
+                throw new Error(msg);
+            }
+
+            // add field prefix
+            if(prefix)
+                field2.dbFieldPrefix = prefix;
+
+            // and set locale version of label
+            if(locale)
+                field2.label = locale.f_(n1);
+
+            // rebuild schema field from new desc
+            this._fields[n] = SchemaField.build(n,field2);
+            fmeta[n] = this._fields[n].metadata();
+        });
+
+        this._metadata = {fields:fmeta};
+
+        // update field name list (with otherFields)
+        this._fnames = aFnames.join(",");                
+        aFnames = Object.keys(fmeta);
+
+        return aFnames;
+    } 
+
+    _setFieldsFromDesc(fields,locale,prefix) 
+    {
+        let fmeta = {};
+        let aFnames = [];
+
+        // get fields from config
+        this._fnames = "";
+
+        // Object => get fields from description
+        objectSce.forEachSync(fields,(field,fname)=>
+        {
+            let field2 = Object.assign({},field);
+
+            if(prefix && !field.dbFieldPrefix)
+                field2.dbFieldPrefix = prefix;
+
+            this._fields[fname] = SchemaField.build(fname,field2);
+            if(locale)
+                field2.label = locale.f_(fname);
+            else
+                if(!field.label)
+                    field.label = this._fields[fname].label();
+
+            fmeta[fname]=this._fields[fname].metadata();
+
+            aFnames.push(fname);
+        });
+
+        aFnames = Object.keys(fmeta);
+
+        this._fnames = aFnames.join(",");
+        this._metadata = {fields:fmeta};
+
+        return aFnames;
     }
 
     _getWhere(whereDesc,fieldPrefix) {
@@ -345,6 +403,13 @@ class DbView
     
     fields() {
         return this._fields;
+    }
+    
+    field(fname) {
+        if(this._fields[fname])
+            return this._fields[fname];
+            // return new SchemaField(fname,this._fields[fname]);
+        return null;
     }
 
     fieldPrefix() {

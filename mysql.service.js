@@ -449,7 +449,7 @@ class MySqlInstance extends FlowNode
                 // execute in reverse order
                 let v = av[i].trim();
                 const func = "_format_"+v;
-                const fdesc = schema.field(k);
+                const fdesc = view.field(k);
                 if(typeof this[func] == "function")
                     this[func](k,rec,fdesc,locale);
             }
@@ -487,7 +487,7 @@ class MySqlInstance extends FlowNode
         }
         else
         {
-            let html = v && (fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+            let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
             rec[fname] = {
                 value:v,
                 html
@@ -827,10 +827,12 @@ class MySqlInstance extends FlowNode
 
         let data={};
         objectSce.forEachSync(view.fields(),(f,n) => {
-            data[n] = 
-            (f.type=='string') ? '' :
-            (f.type=='integer') ? 0  : 
-            '';
+            let dft = f.default();
+            let type = f.type();
+
+            data[n] = dft ||
+                ((type=='string') ? '' :
+                (type=='integer') ? 0  : '');
         });
 
         data = this._formatRecord(data,view);
