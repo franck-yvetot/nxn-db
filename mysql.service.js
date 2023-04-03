@@ -1,6 +1,7 @@
 const debug = require("@nxn/debug")('MYSQL_SCE');
 const {configSce, FlowNode} = require('@nxn/boot');
 const {objectSce} = require("@nxn/ext");
+const mapper = require("@nxn/ext/map.service");
 
 const mysql = require('mysql2/promise');
 
@@ -487,11 +488,16 @@ class MySqlInstance extends FlowNode
         }
         else
         {
-            let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
-            rec[fname] = {
-                value:v,
-                html
-            };
+            if(v && v.value && v.html)
+                rec[fname] = v;
+            else
+            {
+                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+                rec[fname] = {
+                    value:v,
+                    html
+                };    
+            }
         }
     }
 
@@ -824,11 +830,18 @@ class MySqlInstance extends FlowNode
     getEmpty(options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
+        
+        const variables = options.variables || {};
 
         let data={};
         objectSce.forEachSync(view.fields(),(f,n) => {
             let dft = f.default();
             let type = f.type();
+
+            if(dft && dft.split &&  dft[0] == "%")
+            {
+                dft = mapper.mapAttribute(dft,variables);
+            }
 
             data[n] = dft ||
                 ((type=='string') ? '' :
