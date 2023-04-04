@@ -409,7 +409,7 @@ class MySqlInstance extends FlowNode
     // map field OP value
     fieldWhere(fname,operator='=',valueStr='$value') 
     {
-        return fname +" "+ operator +" '$value'";
+        return fname +" "+ operator +" "+valueStr;
     }
 
     _mapLimit(limit=0,skip=0) 
