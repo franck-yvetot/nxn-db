@@ -590,10 +590,15 @@ class MySqlInstance extends FlowNode
 
         const type = field.type();
         if(type == 'string')
+        {
+            if(typeof v == "object")
+                return "''";
+
             if(v.replace)
-            return "'"+v.replace(/'/g,"\\'")+"'";
+                return "'"+v.replace(/'/g,"\\'")+"'";
             else
-                return v;
+                return v
+        }
         
         if(type == 'integer')
             return 0+v;
