@@ -1,833 +1,1325 @@
-const debug = require("@nxn/debug")('DbModel');
+const debug = require("@nxn/debug")('MYSQL_SCE');
+const {configSce, FlowNode} = require('@nxn/boot');
 const {objectSce} = require("@nxn/ext");
+const mapper = require("@nxn/ext/map.service");
 
-//const { Timestamp } = require("mongodb");
-const invalidParam = (s) => { throw new Error(s); }
-const FlowNode = require("@nxn/boot/node");
+const mysql = require('mysql2/promise');
 
-class SchemaField {
-    constructor(name,desc) {
-        desc.label = desc.label || (name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g,' '));
-        this._desc = desc;
-        this._name = name;
-        this._meta = {...desc};
-        ['sqlName','dbName','dbFieldPrefix'].forEach(fn=> {if(this._meta[fn]) delete this._meta[fn] });
-    }
+let pools = {};
 
-    isEnum() {
-        return false;
-    }
+// MySQL Handler :  base class for connection and connection pool versions
+class MySqlHandlerBase
+{
+    // process connection config and create parameters for MySQL
+    buildParams(conInfo,isPool=false) 
+    {
+        if(!conInfo.MYSQL_USER)
+            throw "cant find MYSQL_USER for connecting MySql instance";
 
-    name() {
-        return this._name;
-    }
+        if(!conInfo.MYSQL_PWD)
+            throw "cant find MYSQL_PWD for connecting MySql instance";
 
-    desc() {
-        return this._desc;
-    }
+        if(!conInfo.MYSQL_DB)
+            throw "cant find MYSQL_DB for connecting MySql instance";
 
-    metadata() {
-        return this._meta;
-    }
+        let database = conInfo.MYSQL_DB;
 
-    type() {
-        return this._prop("type","String");
-    }
-
-    required() {
-        return this._prop("required",false);
-    }
-
-    default() {
-        return this._prop("default",null);
-    }
-
-    enum() {
-        return this._prop("enum",null);
-    }
-
-    enumUrl() {
-        return this._prop("dataUrl",null);
-    }
-
-    label() {
-        return this._prop("label") || this.name();
-    }
-
-    description() {
-        return this._prop("description") || this.name()+" : "+this.type();
-    }
-
-    sqlName() {
-        return this._prop("sqlName")|| this.name();
-    }
-
-    dbName(prefix=null) {
-        let n = this._prop("dbName");
-
-        if(!n)
+        let params = 
         {
-            n = (prefix!==null && prefix) || this.dbFieldPrefix();
-            n += this.name();
+            user: conInfo.MYSQL_USER, 
+            password:conInfo.MYSQL_PWD,
+            database
+        };
+
+        let message = " ";
+
+        // for cloud run
+        if(conInfo.MYSQL_SOCKET_PATH)
+        {
+            // e.g. '/cloudsql/project:region:instance'
+            // ex. '/cloudsql/presence-talents:europe-west1:presence-talents-preprod56'
+            params.socketPath = conInfo.MYSQL_SOCKET_PATH;
+            message += " SOCKET "+params.socketPath;
+        }
+        else
+        {
+            if(!conInfo.MYSQL_HOST)
+                throw "cant find MYSQL_HOST for connecting MySql instance";
+            
+            params.host = conInfo.MYSQL_HOST;
+            params.port = conInfo.MYSQL_PORT || 3306;
+
+            message += " Host "+params.host+":"+params.port;
         }
 
-        return n;
-    }
-
-    dbFieldPrefix() {
-        return this._prop("dbFieldPrefix")|| '';
-    }
-
-    alias() {
-        return this._prop("alias")|| this.name();
-    } 
-    
-    tags() {
-        return this._desc['x-tags'] || [];
-    }
-
-    hasTag(t) {
-        return this.tags().includes(t);
-    }
-
-    _prop(name,dft=null) {
-        if(typeof this._desc[name] != "undefined")
-            return this._desc[name];
-
-        return dft;
-    }
-
-    static build(name,desc) {
-        if(desc.enum || desc.enumValues || desc['x-dynamic-values'])
-            return new SchemaFieldEnum(name,desc);
-
-        return new SchemaField(name,desc);
-    }
-}
-
-class SchemaFieldEnum extends SchemaField {
-    constructor(name,desc) {
-        super(name,desc);
-        this.enum = desc.enum || {};
-    }
-
-    isEnum() {
-        return true;
-    }
-
-    getEnum(v,sep=",",locale) {
-        if(v.indexOf && v.indexOf('|') > -1)
+        if(conInfo.MYSQL_TIMEOUT) 
         {
-            let aV = v.split("|").filter(e => e != '').map(e => this._mapEnum(e,locale));
-            if(sep)
-                return aV.join(sep);
-
-            return aV;
+            params.connectTimeout = conInfo.MYSQL_TIMEOUT;
+            // params.waitForConnections = true;                
         }
 
-        return this._mapEnum(v,locale);
+        if(isPool)
+            params.connectionLimit = conInfo.MYSQL_MAX_CONNECTIONS || 100;
+
+        params.debug = conInfo.MYSQL_DEBUG || false;        
+        
+        return {params,message};
     }
 
-    _mapEnum(v,locale) {
+    // execute the query ("execute" for INSERT/UPDATE/REPLACE/PATCH, "query" for SELECT/DELETE)
+    // manage reuse of same connection for "SELECT SQL_CALC_FOUND_ROWS" (nb of rows is kept in con object by MySQL)
+    // for that : callback is called if provided, with the con object
+    async query(q,view=null,values=null,reconnect=false,cb=null,con=null)
+    {
+        let res;
         try 
         {
-            return locale && locale.e_(v,this._name,this.enum && this.enum[v]);
+            if(!con)
+                con = await this.getCon();
             
+            if(values)
+                res = await con.execute(q,values);
+            else
+                res = await con.query(q);
+
+            if(cb)
+            {
+                // use cb to exec another query on same con
+                let p = cb(res,con);
+                if(p.then)
+                    await p;
+            }                
         } 
         catch (error) 
         {
-            debug.error(error.message);
-            throw error;            
-        }
+            debug.error("ERROR in MYSQL query "+q);
+            debug.error("ERROR message "+error.message);
+
+            throw error;
+        }  
+        finally 
+        {
+            this.releaseCon(con);
+        }          
+    
+        if(res.insertId)
+            return res.insertId;
+
+        const [rows, fields] = res;     
+        return rows;
     }
+
 }
 
-
-
-/** a view is based on the schema definition and alos on specific model properties
- *  A view defined in the schema, can have different properties (ex. field names of the database) 
- *  for each model instance.
- */
-class DbView 
+// MySQL Handler :  pooled version
+class MySqlPool extends MySqlHandlerBase
 {
-    constructor(name,desc,model,lang=null) 
+    constructor() 
     {
-        this.desc = desc;
-        this._name = name;
-        this._model = model;
-        const schema = this._schema = model.schema();
-        const locale = this._locale = model.locale(lang);
-        this._db = model.db();
+        super();
+        this.conInfo = null;
+        this.connected = false;
+    }
 
-        // get fields in config or from schema
-        const meta = this._schema.metadata();
+    async connect(conInfo, force=false) 
+    {
+        if(!force && this.connected)
+            return this.con; 
 
-        const prefix = this._dbFieldPrefix = desc.dbFieldPrefix || model.fieldPrefix();
-        const aPrefix = prefix.split('.');
-        if(aPrefix.length>1)
-        {
-            // prefix includes table name F._
-            this._dbTableAlias = aPrefix[0];
-            this._dbFieldPrefixNoTable =  aPrefix[1];
-        }
-        else
-        {
-            // simple field prefix _
-            this._dbTableAlias = null;
-            this._dbFieldPrefixNoTable = prefix;
-        }
+        try 
+        {            
+            let {params,message} = this.buildParams(conInfo,true);
 
-        this._fields = {};
-        this._fnames = "";
-        let aFnames = [];
-
-        if(typeof desc.fields == "string") 
-        {
-            // CSV => get field description from schema
-            // and "otherFields" list for completing/modifying schema props
-            aFnames = this._setFieldFromCSV(desc,schema,locale,prefix);
-        }
-        else 
-        {
-            let fields;
-
-            // get fields
-            if(typeof desc.fields == "object")
-                fields = desc.fields;
-            else if(typeof desc.fields == "function")
-                fields = desc.fields();
-
-            // complete with otherFields collection
-            let otherFields = desc.otherFields || desc["other-fields"];
-
-            if(typeof otherFields == "object")
-                fields = {...fields,...otherFields};
-
-            if(fields)
+            // Database Name
+            try 
             {
-                // get fields from config
-                aFnames = this._setFieldsFromDesc(fields,locale,prefix);
+                // Use connect method to connect to the Server
+                this.pool = mysql.createPool(params);
+            } 
+            catch (err) 
+            {
+                debug.error(err.stack);
             }
+                    
+            if(this.pool)
+                debug.log("MYSQL POOL CONNECTED TO DB: "+params.database+message);
+            else
+                throw "MYSQL POOL CANT CONNECT TO DB :"+params.database+message;
+
+            this.connected = true;
+            return this.pool;
         }
-
-        // defines how to format where clauses to be used by db hnadlers
-        this.fieldWhere = 
-            this._db.fieldWhere
-                ||
-                ((fname,operator='=',valueStr='$value') => 
-                {
-                    return fname +" "+ operator +" '$value'";
-                });
-
-        // get where clause
-        let w = {...desc.where};
-        this.desc.wherePrefix = this._getWhere(w,prefix); // with full table/field prefix aka T1._
-        this.desc.whereNoTablePrefix = this._getWhere(w,this._dbFieldPrefixNoTable); // with only field prefix aka _
-
-
-        // get internal db names with prefix if any
-        this._dbFnames = aFnames.map(n=>
-            this._fields[n].dbName(prefix)+' AS `'+this._fields[n].alias()+'`'
-        ).join(',');
-        this._dbFnamesInsert = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable)).join(',');
-        this._dbFnamesUpdateArray = aFnames.map(n=>this._fields[n].dbName(this._dbFieldPrefixNoTable));
-
-        /*
-        if(!prefix)
-            this._dbFnames = this._fnames;
-        else if(schema.outputWithoutPrefix())
-            this._dbFnames = aFnames.map(n=>this._fields[n].dbName()+' AS '+n).join(',');
-        else
-            this._dbFnames = aFnames.map(n=>prefix+n).join(',');
-        */
-
-        // format output record
-        if(this.desc.format) {
-            this._format = this.desc.format;
+        catch(err) 
+        {
+            debug.error(`cant connect to MySql pool instance `+err);
+            return Promise.reject({error:500,error:"cant conect to MySql "+err});
         }
     }
 
-    _setFieldFromCSV(viewDesc,schema,locale,prefix) 
+    async getCon() 
     {
-        let fmeta = {};
-        let otherFnames=[];
+        let con = await this.pool.getConnection();        
+        // debug.log("get CON "+con.connection._internalId);
+        return con;
+    }
 
-        // CSV => get field description from schema
-
-        // fields: "*"
-        if(viewDesc.fields == '*' || viewDesc.fields == '')
-            viewDesc.fields = schema.fieldsNames();
-
-        let aFnames = viewDesc.fields.split(',').map(n=>n.trim());
-
-        let otherFields = viewDesc.otherFields || viewDesc["other-fields"];
-        if(otherFields && typeof otherFields == "object") 
+    async releaseCon(con) {
+        if(con)
         {
-            otherFnames = Object.keys(otherFields);
-            // get unique array from fields and otherFields
-            aFnames = [...new Set([...aFnames,...otherFnames])];
+            // debug.log("Release CON "+con.connection._internalId);
+            con.release();    
         }
+    }
 
-        // extract field names
-        this._fnames = aFnames.join(',');
-        aFnames = this._fnames.split(',');
+    async close() {
 
-        // get field descs from shema
-        this._fnames.split(',').map(n1=>
-        {
-            // get schema field
-            const n = n1.trim();
-            let schemaF = schema.field(n);
-            let field2;
+    }    
+}
 
-            // get field desc from "otherFields" list (allow to complete or modify schema fields descs)
-            if(otherFields && otherFields[n])                
-                field2 = Object.assign({},otherFields[n]);
-            else if(schemaF)
-                // or from schema
-                field2 = Object.assign({},schemaF.desc());
-            else 
+// MySQL Handler :  simple connection version
+// NB. this version is less efficient than pooled version
+class MySqlCon extends MySqlHandlerBase
+{
+    constructor() 
+    {
+        super();
+        this.conInfo = null;
+        this.connected = false;
+        this.con = null;
+    }
+
+    async connect(conInfo, force=false) 
+    {
+        if(!force && this.connected)
+            return this.con;
+
+        try 
+        {     
+            let {params,message} = this.buildParams(conInfo,true);
+
+            // Database Name
+            try 
             {
-                // or error
-                let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+schema.name();
-                debug.error(msg);
-                throw new Error(msg);
+                // Use connect method to connect to the Server
+                this.con = await mysql.createConnection(params);
+            } 
+            catch (err) 
+            {
+                debug.error(err.stack);
             }
+                    
+            if(this.con)
+                debug.log("MYSQL CONNECTED TO DB: "+params.database+message);
+            else
+                throw "MYSQL CANT CONNECT TO DB :"+params.database+message;
 
-            // add field prefix
-            if(prefix)
-                field2.dbFieldPrefix = prefix;
+            this.connected = true;
+            return this.con;
+        }
+        catch(err) 
+        {
+            debug.error(`cant connect to MySql instance `+err);
+            return Promise.reject({error:500,error:"cant conect to MySql "+err});
+        }
+    }
 
-            // and set locale version of label
-            if(locale)
-                field2.label = locale.f_(n1);
+    async getCon() 
+    {
+        return this.con;
+    }    
 
-            // rebuild schema field from new desc
-            this._fields[n] = SchemaField.build(n,field2);
-            fmeta[n] = this._fields[n].metadata();
-        });
+    async releaseCon(con) {
+    }
 
-        this._metadata = {fields:fmeta};
+    async close() 
+    {
+        if(this.connected)
+        {
+            this.connected = false;
+            const con = this.con;
+            await con.end();
+        }
+    }    
+}
 
-        // update field name list (with otherFields)
-        this._fnames = aFnames.join(",");                
-        aFnames = Object.keys(fmeta);
-
-        return aFnames;
+class MySqlInstance extends FlowNode
+{
+    constructor(inst) {
+        super(inst);
     } 
 
-    _setFieldsFromDesc(fields,locale,prefix) 
+    async init(config,ctxt,...injections)
     {
-        let fmeta = {};
-        let aFnames = [];
+        if(!config || this.config)
+            return;
 
-        // get fields from config
-        this._fnames = "";
+        super.init(config,ctxt,injections);
 
-        // Object => get fields from description
-        objectSce.forEachSync(fields,(field,fname)=>
-        {
-            let field2 = Object.assign({},field);
+        this.conHandler = null;
 
-            if(prefix && !field.dbFieldPrefix)
-                field2.dbFieldPrefix = prefix;
+        this.config = config;
+        this.conPath = config.conPath || '.MySql';
 
-            if(locale)
-                field2.label = locale.f_(fname);
-            else
-                if(!field2.label)
-                    field2.label = this._fields[fname].label();
-
-            this._fields[fname] = SchemaField.build(fname,field2);
-
-            fmeta[fname]=this._fields[fname].metadata();
-
-            aFnames.push(fname);
-        });
-
-        aFnames = Object.keys(fmeta);
-
-        this._fnames = aFnames.join(",");
-        this._metadata = {fields:fmeta};
-
-        return aFnames;
+        this.secretManager = this.getInjection("secrets");
+        this.secretId = this.config.secret_id || "mysql";
     }
 
-    _getWhere(whereDesc,fieldPrefix) {
-        let where;
+    async loadConInfo() 
+    {
+        if(this.conInfo)
+            return this.conInfo;
 
-        if(!whereDesc)
-            where = aFnames.map(n=>this.this.fieldWhere(this._fields[n].dbName(fieldPrefix),"=",'$value'));
-        else 
-        {
-            where = {};
-            objectSce.forEachSync(whereDesc,(v,n)=> 
+        try 
+        {   
+            let conInfo;
+
+            if(this.secretManager)
             {
-                if(typeof v == "string")
-                    where[n]=v;
-                else if(v)
-                {
-                    let field = this._fields[n] || this._schema.field(n);
-                    if(field)
-                        where[n]=this.fieldWhere(field.dbName(fieldPrefix),"=","'$val'");
-                    else
-                        debug.error("unknown field "+n+" in [where] description for view ["+this._name+"] of model ["+this._model.name()+"]");
-                }
-            });            
+                this.conInfo = await this.secretManager.getEnv(this.secretId);
+            }
+            else
+            {
+                this.conInfo = configSce.loadConfig(this.conPath);
+            }
+        }   
+        catch(err) {
+            throw err;
+        }
+
+        return this.conInfo;
+    }
+
+    async connect(force=false) 
+    {
+        if(!force && this.conHandler)
+            return this.conHandler; 
+
+        try 
+        {            
+            let conInfo = await this.loadConInfo();
+
+            let isPool = !(conInfo.MYSQL_POOL===false);
+
+            if(!this.conHandler)
+            {
+                if(isPool)
+                    this.conHandler = new MySqlPool();
+                else
+                    this.conHandler = new MySqlCon();
+            }
+
+            await this.conHandler.connect(conInfo,force);
+            return this.conHandler;
+        }
+        catch(err) 
+        {
+            throw err;
+        }        
+    }
+
+    async close()
+    {
+        if(this.conHandler)
+        {
+            this.conHandler.close();
+            this.conHandler = null;
+        }
+    }
+
+    async query(q,view=null,values=null,reconnect=false,cb=null,con=null) 
+    {
+        try 
+        {
+            let conHandler = await this.connect(reconnect);
+
+            return await conHandler.query(q,view,values,reconnect,cb,con);
+        }
+        catch (error) 
+        {
+            await this._processError(error,q,view,values,cb,con);
+
+            throw error;
+        }
+    }
+
+  /* ============ PRIVATE METHODS ================= */
+
+  async _processError(error,q,view,values,cb,con) 
+  {
+      if(error.message == "Can't add new command when connection is in closed state" 
+        || error.code == 'ETIMEDOUT'
+        || error.code == 'PROTOCOL_CONNECTION_LOST'
+        || error.code == 'EPIPE')
+      {
+          debug.error("try reconnecting...");
+          return this.query(q,view,values,true,cb);
+      }
+      if(error.code == 'ECONNABORTED')
+      {
+          debug.error("MYSQL Connection error, reconnecting...");
+          return this.query(q,view,values,false,cb);
+      }                         
+      if(error.code == 'ER_BAD_FIELD_ERROR')
+      {
+          debug.error("try adding new field...");
+          const isOk = await this._fixMissingField(error,view);
+          if(isOk)
+              return this.query(q,view,values,false,cb,con);
+      }
+      if(error.code == 'ER_NO_SUCH_TABLE')
+      {
+          debug.error("try adding new table...");
+          const isOk = await this._fixMissingTable(error,view);
+          if(isOk)
+              return this.query(q,view,values,false,cb,con);
+      }
+      
+      debug.error("Other MYSQL Error (not managed by MYSQLSce) "+error.code);
+      throw error;
+    }    
+
+    _mapWhere(query,view,withTablePrefix=true) 
+    {
+        var where = "";
+
+        const schema = view.schema();
+
+        if(query)
+        {
+            const prefix = schema.fieldPrefix();
+
+            let aWhere = [];
+            objectSce.forEachSync(query, (value,name)=> 
+            {
+                const fw = view.getFieldWhere(name,value,withTablePrefix);
+                if(fw)
+                    aWhere.push(fw);
+                // where += " "+prefix+name + "='"+value+"'";
+            });
+
+            if(aWhere.length)
+                where = "WHERE "+aWhere.join(" AND ");
+            else
+                where = "";
         }
 
         return where;
     }
 
-    locale() {
-        return this._locale;
+    // map field OP value
+    fieldWhere(fname,operator='=',valueStr='$value') 
+    {
+        return fname +" "+ operator +" "+valueStr;
     }
 
-    fieldsNames(isDbName=false) { 
-        if(!isDbName)
-            return this._fnames; 
-        else
-            return this._dbFnames; 
-    }
-    
-    fieldsNamesInsert(isDbName=false) { 
-        if(!isDbName)
-            return this._fnames; 
-        else
-            return this._dbFnamesInsert; 
-    }
-    fieldsNamesUpdate(isDbName=false) { 
-        if(!isDbName)
-            return this._fnames; 
-        else
-            return this._dbFnamesUpdateArray; 
-    }    
-    
-    fields() {
-        return this._fields;
-    }
-    
-    field(fname) {
-        if(this._fields[fname])
-            return this._fields[fname];
-            // return new SchemaField(fname,this._fields[fname]);
-        return null;
+    _mapLimit(limit=0,skip=0) 
+    {
+        let s='';
+        if(limit) 
+        {
+            s = " LIMIT "+skip+","+limit;
+        }
+
+        return s;
     }
 
-    fieldPrefix() {
-        return this._dbFieldPrefix;
-    }
-    tableAlias() {
-        return this._dbTableAlias || this._schema._collection;
-    }
+    _buildQuery(view, viewName,defaultQuery,map) {
+        let qs = (view && view.getQuery(viewName)) || (this.config.queries && this.config.queries[viewName]) 
+        || defaultQuery;
 
-    tableAsAlias() {
-        return this._dbTableAlias ? 
-            this._schema._collection+' AS '+this._dbTableAlias : 
-                this._schema._collection;
+        const qs2 = qs.replace(/%([a-zA-Z_][a-zA-Z0-9_]+)%/g, (match,p1) => { 
+            return map[p1];
+        })
+        
+        return qs2;
     }
 
+    _formatRecord(rec,view) {
+        const format = view.getFieldsFormats();
+        const locale = view.locale();
+        const schema = view.schema();
 
-    getQuery(name,driver=null) {
-        if(this.desc.queries && this.desc.queries[name])
-            return this.desc.queries[name];
-
-        return this._schema.getDefaultQuery(name);
-    }
-
-    // map $value => actual value in where string of the form fname = '$value'
-    getFieldWhere(fname,val,tablePrefix=true) {
-        if(typeof val == "object" && typeof val.value != "undefined")
-            val = val.value;
-
-        if(tablePrefix)
-            return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
-        else
-            return (this.desc.whereNoTablePrefix[fname] && this.desc.whereNoTablePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
-    }
-
-    name() {
-        return this._name;
-    }
-
-    schema() {
-        return this._schema;
-    }
-
-    model() {
-        return this._model;
-    }
-
-    metadata() {
-        return this._metadata;
-    }
-
-    getFieldsFormats() {
-        return this._format || null;
-    }
-}
-
-class DbSchema
-{
-    constructor(desc) {
-        // get meta
-        this._desc = desc;
-        this._meta = desc.meta || desc;
-        this._name = this._meta.name || this._meta.title || 'Object';
-
-        this._views = {};
-
-        // build fields
-        this._fields = {};
-        this._fieldsMeta = {};
-
-        let fnames = [];
-        const fields = desc.fields || desc.properties;
-
-        const _dbFieldPrefix = desc.dbFieldPrefix ||'';
-        this._dbFieldPrefix = _dbFieldPrefix;
-        this._outputWithoutPrefix = desc.outputWithoutPrefix || true;
-
-        objectSce.forEachSync(fields,(field,fname)=>{
-            let field2 = Object.assign({},field);
-
-            if(_dbFieldPrefix && !field.dbFieldPrefix)
-            field2.dbFieldPrefix = _dbFieldPrefix;
-
-            this._fields[fname] = SchemaField.build(fname,field2);
-            this._fieldsMeta[fname] = this._fields[fname].metadata(); 
-            fnames.push(fname);
+        if(!format)
+            return  Object.assign({}, rec);
+        
+        objectSce.forEachSync(format,(vcsv,k) => 
+        {
+            let av = vcsv.split(',');
+            for (let i=av.length-1;i>=0;i--)
+            {
+                // execute in reverse order
+                let v = av[i].trim();
+                const func = "_format_"+v;
+                const fdesc = view.field(k);
+                if(typeof this[func] == "function")
+                    this[func](k,rec,fdesc,locale);
+            }
         });
 
-        this._fnames = fnames.join(',');
-
-        this._defaultView = { fields:fnames.join(',') };
-        if(desc.queries)
-            this._defaultView.queries = desc.queries;
-
-        // get id
-        this._fId = this._meta.id;
-        if(!this._fId) 
-        {
-            const fId = this._fields._id || this._fields.id || this._fields._oid || this._fields.ID;
-            if(fId)
-                this._fId = fId.name();
-            else
-                invalidParam("No id field in schema "+this._name);
-        }
-
-        // collection/table
-        this._collection = this._meta.table || this._meta.collection || this._meta.name || invalidParam("No collection in data schema");
+        return rec;
     }
 
-    name() {
-        return this._name;
-    }
-
-    collection() {
-        return this._collection;
-    }
-
-    prop(n,dft=null) {
-        if(typeof this._desc[n] != "undefined")
-            return this._desc[n];
-        else
-            return dft;
-    }
-
-    fId() {
-        return this._fId;
-    }
-
-    fields(tag=null) { 
-        if(!tag)
-            return this._fields;
-
-        let fields={};
-        for(let n in this._fields)
-        {
-            let f = this._fields[n];
-            if(f.hasTag(tag))
-                fields[n]=f;
-        }
-        return fields;
-    }
-
-    fieldsNames() { 
-        return this._fnames; 
-    }
-
-    field(fname) {
-        if(this._fields[fname])
-            return this._fields[fname];
-            // return new SchemaField(fname,this._fields[fname]);
-        return null;
-    }
-
-    fieldPrefix() {
-        return this._dbFieldPrefix;
-    }
-
-    outputWithoutPrefix() {
-        return this._outputWithoutPrefix;
-    }
-
-    description() {
-        return this._meta.description || "Object "+this.name();
-    }
-
-    uri() {
-        return this._meta.uri || '/'+this.name();
-    }
-
-    metadata() {
-        return this._fieldsMeta;
-        // return this._desc.fields;
-    }
-
-    getDefaultQuery(n) {
-        return this._desc.queries && this._desc.queries[n] || null;
-    }
-
-    hasView(n) {
-        return this._desc.views && this._desc.views[n];
-    } 
-      
-    getViewDesc(n) {
-        if(!this._desc.views)
-            return this;
-
-        if(n && this._desc.views[n])
-            return this._desc.views[n];
-        else if(this._desc.views['default'])
-            return this._desc.views['default'];
-        else
-            return this;
-    }
-}
-
-class DbModelInstance
-{
-    constructor(name,schema,db,locale,config,modelManager) {
-        this.init(name,schema,db,locale,config,modelManager);
-    }
-
-    init(name,schema,db,locale,config,modelManager) {
-        if(!config || this._config)
-            return;
-
-        this._name = name;
-        this._config=config;
-        this._db = db;
-        this._schema = schema;
-        
-        // if selected lang, get locale for this lang, else, get multi linguage locale
-        this._locale = locale;
-    
-        this._fId = schema.fId() || '_id';
-        this._dbFieldPrefix=config.dbFieldPrefix||schema.fieldPrefix();
-        this._modelManager = modelManager;
-    }
-
-    config() {
-        return this._init;
-    }
-
-    locale() {
-        return this._locale;
-    }
-
-    name() {
-        return this._name;
-    }
-
-    modelManager() {
-        return this._modelManager;
-    }
-
-    prop(n,dft=null) {
-        return this._schema.prop(n,dft);
-    }
-
-    schema() {
-        return this._schema;
-    }
-    db() {
-        return this._db;
-    }
-    config() {
-        return this._config;
-    }
-
-    fieldPrefix() {
-        return this._dbFieldPrefix;
-    }
-
-    collection() {
-        return this._schema.collection();
-    }
-
-    hasView(n) {
-        return this._schema.hasView(n);
-    }
-
-    getView(n,lang=null) {
-        if(!this._views)
-            this._views={};
-
-        if(this._views[n])
-            return this._views[n];
-
-        const viewDesc = this._schema.getViewDesc(n);
-        this._views[n] = new DbView(n,viewDesc,this,lang);
-        return this._views[n];
-    }        
-    
-    createCollection() {
-        return this._db.createCollection(this);
-    }
-
-    removeFieldsFromData(aFnames, data,metadata=null)
+    _format_json(fname,rec,fdesc,locale) 
     {
-        for(let i = 0; i < aFnames.length; i++)
+        if(rec[fname])
         {
-            let fname = aFnames[i];
+            rec[fname] = JSON.parse(rec[fname]);
+        }
+    }
 
-            if(typeof data[fname] != "undefined")
+    _format_base64(fname,rec,fdesc,locale) 
+    {
+        if(rec[fname])
+        {
+            rec[fname] = Buffer.from(rec[fname], 'base64').toString('utf8');
+        }
+    }
+    
+    _format_enum(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        if(v && typeof (rec[fname+'__html']) != "undefined")
+        {
+            rec[fname] = {
+                value:v,
+                html:rec[fname+'__html']
+            };
+            delete rec[fname+'__html'];
+        }
+        else
+        {
+            if(v && v.value && v.html)
+                rec[fname] = v;
+            else
             {
-                delete (data[fname]);
-                if(typeof data[fname+'__html'] != "undefined")
+                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+                rec[fname] = {
+                    value:v,
+                    html
+                };    
+            }
+        }
+    }
+
+    _format_enum_reg(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        let html = v || "";
+
+        if(html)
+        {
+            let format = fdesc._prop("x-enum-reg-format");
+            if(format)
+            {
+                let pattern = format.reg;
+                let regEx = new RegExp(pattern, "gm");
+                let rep = format.html;
+                html = v.replace(regEx,rep) || v || "";
+            }    
+        }
+
+        rec[fname] = {
+            value:v,
+            html
+        };
+    }
+
+    _format_enum_email_name(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        let html = v || "";
+
+        if(html)
+        {
+            try {
+                html = html
+                .split("@")[0]
+                .split(".")
+                .map(mot => mot.charAt(0).toUpperCase() + mot.slice(1).toLowerCase())
+                .join(' ');
+            }
+            catch(error)
+            {
+            }
+        }
+
+        rec[fname] = {
+            value:v,
+            html
+        };
+    }    
+
+    _format_enum_upper_initial_html(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        if(v.html)
+            v.html = v.html
+                .split(' ')
+                .map(mot => mot.charAt(0).toUpperCase() + mot.slice(1).toLowerCase())
+                .join(' ');
+    }    
+
+    _format_enum_static(fname,rec,fdesc,locale) 
+    {
+        if(rec[fname])
+        {
+            let v = rec[fname];
+            let html;
+            if(fdesc && fdesc.getEnum)
+                html = fdesc.getEnum(v,",",locale);
+
+            rec[fname] = {
+                value:v,
+                //html:(locale && locale.e_(rec[fname],fname)) || rec[fname]
+                html
+            };
+        }
+    }
+
+    _formatLocaleValues(fname,rec) 
+    {
+        rec[fname] = this._locale.v_(rec[fname]);
+    }    
+
+    _parseValue(v,field) {
+        if(v && typeof v.value !="undefined")
+            v = v.value;
+
+        if(v === null || typeof v == "undefined")
+            return "NULL";
+
+        const type = field.type();
+        if(type == 'string')
+        {
+            if(typeof v == "object")
+                return "''";
+
+            if(v.replace)
+                return "'"+v.replace(/'/g,"\\'")+"'";
+            else
+                return v
+        }
+        
+        if(type == 'integer')
+            return 0+v;
+
+        if(type == 'date' || type == 'timestamp')
+        {
+            if(typeof v == "integer")
+                return v;
+
+            if(v.includes && v.includes("NOW"))
+                return v.replace(/now(\s*[(]\s*[)])?/i,'NOW()');
+
+            if(v === '' || v == '-')
+                return "NULL";
+
+            return "'"+v+"'";
+        }
+
+        return "'"+v+"'";
+    }
+
+    _fieldDef(schemaField) {
+        const fname = schemaField.dbName();
+        let def = fname+" ";
+        const type = schemaField.type().toLowerCase();
+        const size = schemaField._prop("maxLength",null);
+        let defaultV = schemaField._prop("default",null);
+        let isPrimaryKey = false;
+        let nullable = schemaField._prop("nullable",null)
+
+        switch(type) {
+            case 'string':
+                if(size)
+                    def += "VARCHAR("+size+")";
+                else
+                def += "TEXT";
+
+                if(defaultV!==null)
+                    def +=  " DEFAULT '"+defaultV+"'";
+        
+                break;
+            case 'integer':
+                def += "INT("+(size||"11")+")";
+                if(schemaField._prop("x-auto-id",null))
                 {
-                    delete (data[fname+'__html']);
+                    def += " AUTO_INCREMENT NOT NULL";
+                    isPrimaryKey = true;
+                    nullable = null;
+                }
+                else if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+
+                break;
+            case 'date':
+                def += "DATE";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+
+                // date nullable by default
+                nullable = schemaField._prop("nullable",true)                    
+                break;                    
+            case 'float':
+            case 'number':
+                def += "FLOAT";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+            break;
+            case 'double':
+                def += "DOUBLE";
+                if(defaultV!==null)
+                    def +=  " DEFAULT "+defaultV;
+                break;
+            default:
+                throw new Error("unknown field type "+type);
+        }
+
+        if(nullable!==null)
+            def += nullable ? ' NULL' : " NOT NULL";
+
+        let key = '';
+        if(isPrimaryKey)
+            key = "PRIMARY KEY("+fname+")";       
+
+        return {def,key};
+    }    
+
+    _mapFieldsTypes(fields) {
+        let fdefs = [];
+        let fkeys = [];
+        for(let p in fields)
+        {
+            const {def,key} = this._fieldDef(fields[p]);
+            fdefs.push(def);
+            if(key)
+                fkeys.push(key);
+        }
+        return {fdefs,fkeys};
+    }
+
+    async _fixMissingField(error,view) {
+        const model = view.model();
+        const table = this._collection(model);
+        const fPrefix = view.fieldPrefix();
+
+        const matches = error.message.match(/Unknown column '([^']+)' in 'field list'/);
+        if(matches)
+        {
+            // get field schema 
+            let fname = matches[1];
+            if(fPrefix)
+                fname = fname.replace(new RegExp("^"+fPrefix),'');  
+
+            const fieldSchema = model.schema().field(fname);
+
+            if(fieldSchema)
+            {
+                // get field sql definition
+                const {def,key} = this._fieldDef(fieldSchema);
+                if(def)
+                {
+                    // create ALTER query
+                    let qs = this._buildQuery(
+                        view, 
+                        'add_field',
+                        "ALTER TABLE %table% ADD COLUMN %field_def%",
+                            {
+                                table,
+                                field_def: def
+                            }
+                    );
+
+                    // exec ALTER query
+                    if(this.config.log)
+                        debug.log(qs+ " / add field"+fname);
+
+                    const res = await this.query(qs,view);
+                    if(res)
+                        return true;
                 }
             }
-            if(metadata && typeof metadata.fields[fname] != "undefined")
-            {
-                delete (metadata.fields[fname]);
-            }
+            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+table+
+                " related to view "+view.name()+" in model "+model.name());
+            // something went wrong
+            return false;
         }
 
-        return {data,metadata};
+        // something went wrong
+        return false;
     }
 
-  /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
-    findById(id,options={}) {
-        const where={};
-        where[this._fId]=id;
-        return this._db.findOne(where,options,this);
+    async _fixMissingTable(error,view) 
+    {
+        let model = view.model();
+        let table = this._collection(model);
+
+        const matches = error.message.match(/Table '([^.]+).([^']+)' doesn't exist/);
+        if(matches)
+        {
+            // get field schema 
+            let dbNname = matches[1];
+            let missingTable = matches[2];
+            if(missingTable != table)
+            {
+                
+                model = model.modelManager().getModelByCollection(missingTable);
+                if(model)
+                {
+                    table = model.schema().collection();
+                    model = model.instance();
+                }
+                view = null;
+            }
+
+            if(missingTable == table)
+            {
+                // missng table is the current view schema
+                const res = this.createCollection(null,model,view);
+                if(res)
+                {
+                    debug.log("Table created with success "+missingTable);
+                }
+
+                return res;
+            }
+            else
+                throw new Error("cant fix SQL query or add missing table "+dbNname+"."+missingTable);
+
+            // something went wrong
+            return false;
+        }
+
+        // something went wrong
+        return false;
     }
 
-    findOne(where={},options={}) {
-        return this._db.findOne(where,options,this);
+    _collection(model) {
+        return model.collection() || this.config.table || this.config.collection;
     }
 
-    getEmpty(options={}) {
-        return this._db.getEmpty(options,this);
+    /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
+
+    async createCollection(options,model,view=null) 
+    {
+        if(!view)
+            view = model ? model.getView(options && (options.view||options.$view)||"record") : null;
+        const col = this._collection(model);
+        const fields = model.schema().fields();
+
+        const {fdefs,fkeys} = this._mapFieldsTypes(fields);
+        const fields_def = fdefs.join(',');       
+        let fields_keys = fkeys.join(',');
+        if(fields_keys)
+            fields_keys = ','+fields_keys;
+
+        // compile query
+        let qs = this._buildQuery(
+            view, 
+            'create_collection',
+            "CREATE TABLE IF NOT EXISTS %table% (%fields_def%%fields_keys%)",
+                {
+                    table : col,
+                    fields_def,
+                    fields_keys
+                }
+        );               
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs,view);
+        return true;
     }
 
-    async find(where={},options={}) {
-        return this._db.find(where,options,this);
+    getEmpty(options,model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : null;
+        
+        const variables = options.variables || {};
+
+        let data={};
+        objectSce.forEachSync(view.fields(),(f,n) => {
+            let dft = f.default();
+            let type = f.type();
+
+            if(dft && dft.split &&  dft[0] == "%")
+            {
+                dft = mapper.mapAttribute(dft,variables);
+            }
+
+            data[n] = dft ||
+                ((type=='string') ? '' :
+                (type=='integer') ? 0  : '');
+        });
+
+        data = this._formatRecord(data,view);
+        let ret = {data};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+
+        if(options.withLocale)
+            ret.locale = view.locale();
+
+        return ret;
     }
 
-    async count(where={},options={}) {
-        return this._db.count(where,options,this);
+    async findOne(query,options,model) 
+    {
+        const view = model ? model.getView(options.view||options.$view||"record") : null;
+        const col = options.collection || model.collection() || this.config.table || this.config.collection;
+
+        const where = this._mapWhere(query,view);
+
+        const limit = options.limit||1;
+        const skip = options.skip||0;
+        const qlimit = this._mapLimit(limit,skip);
+
+        // compile query
+        let qs = this._buildQuery(
+            view, 
+            'findOne',
+            "select %fields% from %table% %where% %limit%",
+                {
+                    table : col,
+                    fields: view.fieldsNames(true) || '',
+                    where: where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit: qlimit,
+                    ...query
+                }
+        );
+
+        if(this.config.log)
+            debug.log("REQ "+qs+ " / $view="+view.name());
+
+        const docs = await this.query(qs,view);
+    
+        if(docs.length==0)
+            return null;
+
+        let data = this._formatRecord(docs[0],view);
+        let ret = {data};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+            
+        if(options.withLocale)
+            ret.locale = view.locale();
+            
+        return ret;
     }
 
-    async insertOne(doc,options={}) {
-        return this._db.insertOne(doc,options,this);
+    async find(query,options,model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : null;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        const where = this._mapWhere(query,view,true);
+
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit='';
+
+        let qs = this._buildQuery(
+            view, 
+            'find',
+            "%select% %fields% from %TABLE% %where% %limit%",
+                {
+                    table : col,
+                    TABLE: col+' '+view.tableAlias(),
+                    fields: view.fieldsNames(true) || '',
+                    where: where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit: qlimit,
+                    select: "select SQL_CALC_FOUND_ROWS",
+                    ...query
+                }
+        );
+
+        let nbdocs,data;
+        try 
+        {
+            data = await this.query(qs,view,null,false,
+                async (res,con) =>
+                {
+                    // reuse same con for getting the nb of selected rows that is kept in connection object
+                    nbdocs = await con.query("SELECT FOUND_ROWS() as nbrecords",null,null,false);
+                });
+                
+            if(this.config.log)
+                debug.log(qs + " -> nb = " + data.length+ " / $view="+view.name());    
+        }
+        catch(error) 
+        {
+            debug.error(error);
+        }
+
+        const nb = nbdocs[0].nbrecords;
+        let pages=null;
+        if(nb) {
+            pages = {
+                offset:skip,
+                limit:limit,
+                total:nb
+            };
+        }
+
+        // remap fields?
+        if(view.getFieldsFormats()) {
+            data = data.map(rec => this._formatRecord(rec,view) );
+        }
+
+        let ret = {data,pages};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+
+        if(options.withLocale)
+            ret.locale = view.locale();
+
+        return ret;
     }
 
-    async insertMany(docs,options={}) {
-        return this._db.insertMany(docs,options,this);
+    async count(query,options,model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        const where = this._mapWhere(query,view,true);
+
+        const limit = options.limit||-1;
+        const skip = options.skip||0;
+        const qlimit = this._mapLimit(limit,skip);
+        let qs = this._buildQuery(
+            view, 
+            'count',
+            "count * from %table% %where% %limit%",
+                {
+                    table : col,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    where: where,
+                    limit: qlimit,
+                    ...query
+                }
+        );
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const docs = await this.query(qs,view);
+
+        return docs;
     }
 
-    async updateOne(where,doc,options={}) {
-        return this._db.updateOne(where,doc,false,options,this);
-        //const addIfMissing = !!(options.upsert);
+    async insertOne(doc,options,model) 
+    {
+
+        const view = model ? model.getView(options.view||options.$view||"record") : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        let fields = view.fields();
+        let values = [];
+        let fnames = [];
+        objectSce.forEachSync(fields,(field,name)=> 
+        {
+            fnames.push(name);
+
+            let v;
+            if(typeof doc[name] == "undefined")
+                v = this._parseValue(field.default(),field);
+            else
+                v = this._parseValue(doc[name],field);
+
+            values.push(v);
+        });
+
+        let qs = this._buildQuery(
+            view, 
+            'insertOne',
+            "INSERT INTO %table% (%fields%) VALUES %values%",
+                {
+                    table : col,
+                    fields: view.fieldsNamesInsert(true),
+                    values: "("+values.join(",")+")",
+                    ...doc
+                }
+        );        
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res= await this.query(qs,view);
+        const insertId = res.insertId;
+    
+        return insertId;
     }
 
-    async updateMany(where,doc,options={}) {
-        //const addIfMissing = !!(options.upsert);
-        return this._db.updateMany(where,doc,options,this);
+    async insertMany(docs,options,model) 
+    {
+        const view = model ? model.getView(options.view||options.$view||"record") : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        if(docs.length == 0)
+            return null;
+    
+        const doc = docs[0];
+        let fields = view.fields();
+        let fnames = [];
+        objectSce.forEachSync(fields,(field,name)=> {
+            fnames.push(name);
+        });
+    
+        let aValues = [];
+        docs.forEach(doc => 
+        {
+            let values = [];
+            objectSce.forEachSync(fields,(field,name)=> 
+            {
+                let v;
+                if(typeof doc[name] == "undefined")
+                    v = this._parseValue(field.default(),field);
+                else
+                    v = this._parseValue(doc[name],field);    
+                values.push(v);
+        });
+    
+            aValues.push("("+values.join(",")+")");
+    });
+
+        let qs = this._buildQuery(
+            view, 
+            'insertMany',
+            "INSERT INTO %table% (%fields%) VALUES %values%",
+                {
+                    table : col,
+                    fields: view.fieldsNamesInsert(true),
+                    values: aValues.join(","),
+                }
+        );        
+  
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+    
+        const res= await this.query(qs,view);
+        return res;
     }
 
-    async deleteOne(doc,options={}) {
-        return this._db.deleteOne(doc,options,this);
-    }
+    async updateOne(query,doc,addIfMissing=false,options,model) {
 
-    async deleteMany(where,options={}) {
-        return this._db.deleteMany(where,options,this);
-    }  
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        let fields = view.fields();
+        
+        let values = [];
+        let fnames = [];
+        objectSce.forEachSync(fields,(field,name)=> 
+        {
+            fnames.push(name);
+
+            let v;
+            if(typeof doc[name] == "undefined")
+                v = this._parseValue(field.default(),field);
+            else
+                v = this._parseValue(doc[name],field);
+
+            values.push(v);
+        });
+
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit = 'LIMIT 1';    
+
+        const where = this._mapWhere(query,view,false); // where without table prefix (_oid but not T1._oid)
+        let qs;
+        if(addIfMissing)
+        {
+            let op = "REPLACE ";
+
+            qs = this._buildQuery(
+                view, 
+                'replaceOne',
+                "%replace% INTO %table% (%fields%) VALUES (%values%)",
+                    {
+                        op:op,
+                        update:op,
+                        replace:op,
+                        table : col,
+                        TABLE: col, // +' '+view.tableAlias(),
+                        fields:view.fieldsNamesUpdate(true).join(','),
+                        values:values.join(','),
+    
+                        where: '',
+                        WHERE:'',
+                        limit: '',
+                        ...query,
+                        ...doc
+                    }
+            );             
+        }
+        else
+        {
+            let op = "UPDATE ";
+
+            // define fname=value csv list
+            let aFnames = view.fieldsNamesUpdate(true);
+            let fields_values = aFnames.map((name,i)=>name+'='+values[i]).join(',');
+            qs = this._buildQuery(
+                view, 
+                'updateOne',
+                "%update% %table% SET %fields_values% %where% %limit%",
+                    {
+                        op:op,
+                        update:op,
+                        table : col,
+                        TABLE: col, // +' '+view.tableAlias(),
+                        fields: view.fieldsNamesUpdate(true),
+                        fields_values:fields_values,
+    
+                        where: where,
+                        WHERE:(where ? where : "WHERE 1=1"),
+                        limit: qlimit,
+                        ...query,
+                        ...doc
+                    }
+            );         
+        }       
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs,view);
+    
+    return res;
 }
 
-class DbModel extends FlowNode
-{
-    constructor(instName,modelManager) {
-        super(instName);
-        this._modelManager = modelManager;
-    }
+    async updateMany(query,docs,addIfMissing=true,options, model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    async init(config,ctxt,...injections) {
-        super.init(config,ctxt,injections);        
+    if(docs.length == 0)
+        return null;
 
-        this._db = this.getInjection('db') || this.invalidParam("no db injection");
-        // this._locale = this.getInjection('locale') || null; // done in FlowNode
-        this._schema = new DbSchema(config.schema,this._locale);
+        const where = this._mapWhere(query,view);
 
-        // store collection name for automatic creation of tables in db
-        const coll = this._schema.collection();
-        if(coll)
-            this._modelManager.registerCollectionModel(coll,this);
-    }
+    col = col || config.table;
+    let qs = this.queries.updateMany || 
+        (addIfMissing ? "REPLACE " : "UPDATE ") +col+" SET ";
+   
+    const doc = docs[0];
+    let fnames = [];
+    objectSce.forEachSync(doc,(value,name)=> {
+        fnames.push(name);
+    });
+   
+    let aValues = [];
+    docs.forEach(row => {
+        let values = [];
+        objectSce.forEachSync(row,(value)=> {
+            values.push(value);
+        });
+        aValues.push("('"+values.join("','")+"')");
+    });
 
-    uri() {
-        return this.config.uri || this._schema.uri();
-    }
+    let qvals = aValues.join(",");
+    qs += " ("+fnames.join(",")+") "+ "VALUES ("+qvals+")";
+    qs += where;
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs,view);
     
-    schema() {
-        return this._schema;
-    }
-    
-    db() {
-        return this._db;
-    }
-
-    instance(lang=null) {
-        return new DbModelInstance(
-            this._schema.name(),this._schema,this._db,
-            this.locale.localeByLang(lang),
-            this.config,this._modelManager);
-    }
+    return res;
 }
 
-class DbModelSce
+    async deleteOne(query,options, model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+        let qlimit,skip,limit;
+        if(options.limit)
+        {
+            limit = options.limit;
+            skip = options.skip||0;
+            qlimit = this._mapLimit(limit,skip);    
+        }
+        else
+            qlimit = 'LIMIT 1';    
+        
+        const where = this._mapWhere(query,view,false);
+
+        let qs = this._buildQuery(
+            view, 
+            'deleteOne',
+            "DELETE FROM %TABLE% %where% %limit%",
+                {
+                    table : col,
+                    TABLE: col,
+
+                    where,
+                    WHERE:(where ? where : "WHERE 1=1"),
+                    limit:qlimit,
+                    ...query
+                }
+        );
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs,view);
+        const deleteRows = res.affectedRows||0;
+    
+        return deleteRows;
+}
+
+    async deleteMany(query,options, model) 
+    {
+        const view = model ? model.getView(options.view||options.$view) : this.config;
+        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+    let qs = this.queries.deleteMany || "DELETE FROM "+col;
+        
+        const where = this._mapWhere(query,view);
+    qs += where;
+
+        if(this.config.log)
+            debug.log(qs+ " / $view="+view.name());
+
+        const res = await this.query(qs,view);
+    
+    return res;
+}  
+
+}
+
+class MySqlSce
 {
-    constructor () {
+  constructor() {
         this.instances={};
-        this.collections={};
-    }
-
+  }
     getInstance(instName) {
         if(this.instances[instName])
             return this.instances[instName];
 
-        const inst = this.instances[instName] = new DbModel(instName,this);
-
-        return inst;
-    }
-
-    // store a lookup of model by table name for recovery of missing tables/fields
-    registerCollectionModel(coll,model) {
-        this.collections[coll] = model;
-    }
-
-    getModelByCollection(coll) {
-        if(this.collections[coll])
-            return this.collections[coll];
-
-        return null;
-    }
+        return (this.instances[instName] = new MySqlInstance());
+  }
 }
 
-const DB_SCE = new DbModelSce();
-module.exports = DB_SCE;
+module.exports = new MySqlSce();

@@ -289,7 +289,7 @@ class DbView
             else 
             {
                 // or error
-                let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+model.name();
+                let msg = "Unknown field "+n+" in schema for view "+this._name+" of model "+schema.name();
                 debug.error(msg);
                 throw new Error(msg);
             }
@@ -332,12 +332,13 @@ class DbView
             if(prefix && !field.dbFieldPrefix)
                 field2.dbFieldPrefix = prefix;
 
-            this._fields[fname] = SchemaField.build(fname,field2);
             if(locale)
                 field2.label = locale.f_(fname);
             else
-                if(!field.label)
-                    field.label = this._fields[fname].label();
+                if(!field2.label)
+                    field2.label = this._fields[fname].label();
+
+            this._fields[fname] = SchemaField.build(fname,field2);
 
             fmeta[fname]=this._fields[fname].metadata();
 
