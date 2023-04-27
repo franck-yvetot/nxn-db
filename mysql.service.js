@@ -388,6 +388,9 @@ class MySqlInstance extends FlowNode
         {
             const prefix = schema.fieldPrefix();
 
+            // support _all_ clause to be added regarless of query params
+            query._all_ = "*";
+
             let aWhere = [];
             objectSce.forEachSync(query, (value,name)=> 
             {
