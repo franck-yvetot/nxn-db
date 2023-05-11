@@ -245,6 +245,10 @@ class DbView
         if(this.desc.format) {
             this._format = this.desc.format;
         }
+
+        // add metadata infos
+        if(this._metadata)
+            this._metadata.view = this.infos();
     }
 
     _setFieldFromCSV(viewDesc,schema,locale,prefix) 
@@ -448,6 +452,13 @@ class DbView
 
     name() {
         return this._name;
+    }
+
+    infos() {
+        return {
+            name: this._name,
+            schema:this._schema.name()
+        }
     }
 
     schema() {
