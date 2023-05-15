@@ -504,6 +504,39 @@ class MySqlInstance extends FlowNode
         }
     }
 
+    _format_enum_with_email(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        if(v && typeof (rec[fname+'__html']) != "undefined")
+        {
+            rec[fname] = {
+                value:v,
+                html:rec[fname+'__html']
+            };
+            delete rec[fname+'__html'];
+
+            // add email if exists
+            if(typeof (rec[fname+'__email']) != "undefined")
+            {
+                rec[fname].email = rec[fname+'__email'];
+                delete rec[fname+'__email'];
+            }
+        }
+        else
+        {
+            if(v && v.value && v.html)
+                rec[fname] = v;
+            else
+            {
+                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+                rec[fname] = {
+                    value:v,
+                    html
+                };    
+            }
+        }
+    }    
+
     _format_enum_reg(fname,rec,fdesc,locale) 
     {
         let v = rec[fname];
