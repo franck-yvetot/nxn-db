@@ -212,8 +212,10 @@ class DbView
 
         // defines how to format where clauses to be used by db hnadlers
         this.fieldWhere = 
-            this._db.fieldWhere
+            // check if db handler provides a specific function for formating where operation
+            this._db.fieldWhere 
                 ||
+                // if not, use a simple <fname> <op> <value> formating (works for sql and no sql) 
                 ((fname,operator='=',valueStr='$value') => 
                 {
                     return fname +" "+ operator +" '$value'";
@@ -613,7 +615,7 @@ class DbSchema
         else if(this._desc.views['default'])
             return this._desc.views['default'];
         else
-            return this;
+            return this._desc;
     }
 }
 
@@ -638,10 +640,6 @@ class DbModelInstance
         this._fId = schema.fId() || '_id';
         this._dbFieldPrefix=config.dbFieldPrefix||schema.fieldPrefix();
         this._modelManager = modelManager;
-    }
-
-    config() {
-        return this._init;
     }
 
     locale() {
@@ -795,6 +793,10 @@ class DbModel extends FlowNode
         return this.config.uri || this._schema.uri();
     }
     
+    /**
+     * get db schema for this model
+     * @returns {DbSchema}
+     */
     schema() {
         return this._schema;
     }
@@ -803,6 +805,11 @@ class DbModel extends FlowNode
         return this._db;
     }
 
+    /**
+     * returns a db model instance
+     * @param {*} lang 
+     * @returns {DbModelInstance}
+     */
     instance(lang=null) {
         return new DbModelInstance(
             this._schema.name(),this._schema,this._db,
@@ -818,6 +825,9 @@ class DbModelSce
         this.collections={};
     }
 
+    /** return a model instance
+     * @returns {DbModel}
+     */
     getInstance(instName) {
         if(this.instances[instName])
             return this.instances[instName];
@@ -842,3 +852,6 @@ class DbModelSce
 
 const DB_SCE = new DbModelSce();
 module.exports = DB_SCE;
+module.exports.DbModelInstance = DbModelInstance;
+module.exports.DbModelSce = DbModelSce;
+module.exports.DbModel = DbModel;
