@@ -95,6 +95,9 @@ class MySqlHandlerBase
             debug.error("ERROR in MYSQL query "+q);
             debug.error("ERROR message "+error.message);
 
+            if(view)
+                debug.error("VIEW ",view.infos());
+
             throw error;
         }  
         finally 
@@ -1061,6 +1064,8 @@ class MySqlInstance extends FlowNode
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
+        const variables = options.variables || {};
+
         let fields = view.fields();
         let values = [];
         let fnames = [];
@@ -1070,7 +1075,16 @@ class MySqlInstance extends FlowNode
 
             let v;
             if(typeof doc[name] == "undefined")
-                v = this._parseValue(field.default(),field);
+            {
+                let dft = field.default();
+
+                if(dft && dft.split &&  dft[0] == "%")
+                {
+                    dft = mapper.mapAttribute(dft,variables);
+                }
+
+                v = this._parseValue(dft,field);    
+            }
             else
                 v = this._parseValue(doc[name],field);
 
