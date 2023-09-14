@@ -216,7 +216,7 @@ class DbView
             this._db.fieldWhere 
                 ||
                 // if not, use a simple <fname> <op> <value> formating (works for sql and no sql) 
-                ((fname,operator='=',valueStr='$value') => 
+                ((fname,operator='=',valueStr='$value',field) => 
                 {
                     return fname +" "+ operator +" '$value'";
                 });
@@ -363,7 +363,11 @@ class DbView
         let where;
 
         if(!whereDesc)
-            where = aFnames.map(n=>this.this.fieldWhere(this._fields[n].dbName(fieldPrefix),"=",'$value'));
+            where = aFnames.map(n=> 
+            {
+                const field = this._fields[n] || this._schema.field(n);
+                return this.fieldWhere(this._fields[n].dbName(fieldPrefix),"=",'$value',field);
+            });
         else 
         {
             where = {};
@@ -375,7 +379,11 @@ class DbView
                 {
                     let field = this._fields[n] || this._schema.field(n);
                     if(field)
-                        where[n]=this.fieldWhere(field.dbName(fieldPrefix),"=","'$val'");
+                    {
+                        //const vpattern = field.type() == 'integer' ? "$val" : "'$val'";
+                        const vpattern = "'$val'";
+                        where[n]=this.fieldWhere(field.dbName(fieldPrefix),"=",vpattern,field);
+                    }
                     else
                         debug.error("unknown field "+n+" in [where] description for view ["+this._name+"] of model ["+this._model.name()+"]");
                 }
