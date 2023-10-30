@@ -5,9 +5,15 @@ const {objectSce} = require("@nxn/ext");
 const invalidParam = (s) => { throw new Error(s); }
 const FlowNode = require("@nxn/boot/node");
 
-class SchemaField {
-    constructor(name,desc) {
-        desc.label = desc.label || (name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g,' '));
+class SchemaField 
+{
+    constructor(name,desc,locale=null) {
+        
+        if(locale)
+            desc.label = locale.f_(name);
+        else
+            desc.label = desc.label || (name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g,' '));
+
         this._desc = desc;
         this._name = name;
         this._meta = {...desc};
@@ -97,18 +103,22 @@ class SchemaField {
         return dft;
     }
 
-    static build(name,desc) {
+    static build(name,desc,locale=null) {
         if(desc.enum || desc.enumValues || desc['x-dynamic-values'])
-            return new SchemaFieldEnum(name,desc);
+            return new SchemaFieldEnum(name,desc,locale);
 
-        return new SchemaField(name,desc);
+        return new SchemaField(name,desc,locale);
     }
 }
 
 class SchemaFieldEnum extends SchemaField {
-    constructor(name,desc) {
-        super(name,desc);
-        this.enum = desc.enum || {};
+    constructor(name,desc,locale=null) {
+        super(name,desc,locale);
+
+        if(desc.enum && locale)
+            this._meta.enum = this.enum = locale.enumList(name,desc.enum || {});
+        else
+            this.enum = desc.enum || {};
     }
 
     isEnum() {
@@ -141,7 +151,6 @@ class SchemaFieldEnum extends SchemaField {
         }
     }
 }
-
 
 
 /** a view is based on the schema definition and alos on specific model properties
@@ -305,11 +314,12 @@ class DbView
                 field2.dbFieldPrefix = prefix;
 
             // and set locale version of label
-            if(locale)
+            /*if(locale)
                 field2.label = locale.f_(n1);
+            */
 
             // rebuild schema field from new desc
-            this._fields[n] = SchemaField.build(n,field2);
+            this._fields[n] = SchemaField.build(n,field2,locale);
             fmeta[n] = this._fields[n].metadata();
         });
 
@@ -344,7 +354,7 @@ class DbView
                 if(!field2.label)
                     field2.label = this._fields[fname].label();
 
-            this._fields[fname] = SchemaField.build(fname,field2);
+            this._fields[fname] = SchemaField.build(fname,field2,locale);
 
             fmeta[fname]=this._fields[fname].metadata();
 
@@ -451,7 +461,7 @@ class DbView
 
     // map $value => actual value in where string of the form fname = '$value'
     getFieldWhere(fname,val,tablePrefix=true) {
-        if(typeof val == "object" && typeof val.value != "undefined")
+        if(typeof val == "object" && val && typeof val.value != "undefined")
             val = val.value;
 
         if(tablePrefix)
@@ -513,7 +523,7 @@ class DbSchema
             let field2 = Object.assign({},field);
 
             if(_dbFieldPrefix && !field.dbFieldPrefix)
-            field2.dbFieldPrefix = _dbFieldPrefix;
+                field2.dbFieldPrefix = _dbFieldPrefix;
 
             this._fields[fname] = SchemaField.build(fname,field2);
             this._fieldsMeta[fname] = this._fields[fname].metadata(); 
@@ -688,16 +698,25 @@ class DbModelInstance
         return this._schema.hasView(n);
     }
 
-    getView(n,lang=null) {
+    getView(n,lang=null) 
+    {
+        lang = lang || this._locale?.lang;
+
+        const k = n+"__"+(lang||'');
+
         if(!this._views)
             this._views={};
 
-        if(this._views[n])
-            return this._views[n];
+        if(this._views[k])
+            return this._views[k];
 
         const viewDesc = this._schema.getViewDesc(n);
-        this._views[n] = new DbView(n,viewDesc,this,lang);
-        return this._views[n];
+        const view = new DbView(n,viewDesc,this,lang);    
+
+        if(lang)
+            this._views[k] = view
+
+        return view;
     }        
     
     createCollection() {
@@ -795,6 +814,9 @@ class DbModel extends FlowNode
         const coll = this._schema.collection();
         if(coll)
             this._modelManager.registerCollectionModel(coll,this);
+
+        // cache des instances de modèles (instance d'instance)
+        this.instances={};
     }
 
     uri() {
@@ -819,10 +841,19 @@ class DbModel extends FlowNode
      * @returns {DbModelInstance}
      */
     instance(lang=null) {
-        return new DbModelInstance(
-            this._schema.name(),this._schema,this._db,
-            this.locale.localeByLang(lang),
-            this.config,this._modelManager);
+        const name = this._schema.name();
+        const dbId = this._db.id && this._db.id() || '';
+        const key = name + '_'+lang + '_'+dbId;
+
+        if(!this.instances[key])
+        {
+            this.instances[key] = new DbModelInstance(
+                this._schema.name(),this._schema,this._db,
+                this.locale.localeByLang(lang),
+                this.config,this._modelManager);
+        }
+
+        return this.instances[key];
     }
 }
 
