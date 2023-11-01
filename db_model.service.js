@@ -707,7 +707,7 @@ class DbModelInstance
         if(!this._views)
             this._views={};
 
-        if(this._views[k])
+        if(false && this._views[k])
             return this._views[k];
 
         const viewDesc = this._schema.getViewDesc(n);
@@ -815,7 +815,7 @@ class DbModel extends FlowNode
         if(coll)
             this._modelManager.registerCollectionModel(coll,this);
 
-        // cache des instances de modèles (instance d'instance)
+        // cache des instances de mod?les (instance d'instance)
         this.instances={};
     }
 
