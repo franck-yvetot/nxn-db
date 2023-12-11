@@ -1072,9 +1072,23 @@ class MySqlInstance extends FlowNode
         objectSce.forEachSync(fields,(field,name)=> 
         {
             fnames.push(name);
-
+            const alias = field.alias();
             let v;
-            if(typeof doc[name] == "undefined")
+
+            if(field._prop('x-auto-id',false)===true)
+            {
+                // do not set autoincrement
+                v = "NULL";
+            }
+            else if(typeof doc[name] != "undefined")
+            {
+                v = this._parseValue(doc[name],field);
+            }
+            else if(typeof doc[alias] != "undefined")
+            {
+                v = this._parseValue(doc[alias],field);
+            }
+            else
             {
                 let dft = field.default();
 
@@ -1085,8 +1099,6 @@ class MySqlInstance extends FlowNode
 
                 v = this._parseValue(dft,field);    
             }
-            else
-                v = this._parseValue(doc[name],field);
 
             values.push(v);
         });
