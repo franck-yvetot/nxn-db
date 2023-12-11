@@ -102,6 +102,7 @@ class FieldFormater
                 html = html
                 .split("@")[0]
                 .split(".")
+                .filter(mot => mot.toLowerCase() != "ext")
                 .map(mot => mot.charAt(0).toUpperCase() + mot.slice(1).toLowerCase())
                 .join(' ');
             }
