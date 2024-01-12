@@ -5,6 +5,8 @@ const mapper = require("@nxn/ext/map.service");
 
 const mysql = require('mysql2/promise');
 
+const mysql2 = require('mysql2');
+
 let pools = {};
 
 // MySQL Handler :  base class for connection and connection pool versions
@@ -245,6 +247,126 @@ class MySqlCon extends MySqlHandlerBase
     }    
 }
 
+// MySQL Handler :  simple connection version
+// NB. this version is less efficient than pooled version
+class MySqlConNoPromise extends MySqlHandlerBase
+{
+    constructor() 
+    {
+        super();
+        this.conInfo = null;
+        this.connected = false;
+        this.con = null;
+    }
+
+    async connect(conInfo, force = false) {
+        if (!force && this.connected) {
+            return this.con;
+        }
+    
+        return new Promise((resolve, reject) => {
+            try {
+                const { params, message } = this.buildParams(conInfo, true);
+    
+                this.con = mysql2.createConnection(params);
+    
+                this.con.connect((err) => {
+                    if (err) {
+                        debug.error("Can't connect to MySql " + err);
+                        reject({ error: 500, message: "Can't connect to MySql " + err });
+                        return;
+                    }
+    
+                    debug.log("MYSQL CONNECTED TO DB: " + params.database + message);
+                    this.connected = true;
+                    resolve(this.con);
+                });
+            } catch (err) {
+                debug.error("Can't connect to MySql instance " + err);
+                reject({ error: 500, message: "Can't connect to MySql " + err });
+            }
+        });
+    }   
+
+    async getCon() 
+    {
+        return this.con;
+    }    
+
+    async releaseCon(con) {
+    }
+
+    async close() 
+    {
+        if(this.connected)
+        {
+            this.connected = false;
+            const con = this.con;
+            await con.end();
+        }
+    }    
+
+
+    // execute the query ("execute" for INSERT/UPDATE/REPLACE/PATCH, "query" for SELECT/DELETE)
+    // manage reuse of same connection for "SELECT SQL_CALC_FOUND_ROWS" (nb of rows is kept in con object by MySQL)
+    // for that : callback is called if provided, with the con object
+    async query(q,view=null,values=null,reconnect=false,cb=null,con=null)
+    {
+        let res;
+        let mustRelease = false;
+        try 
+        {
+            if(!con)
+            {
+                con = await this.getCon();
+                mustRelease = true;
+            }
+
+            return new Promise((resolve, reject) => {                
+            
+                if(values)
+                    ; // res = await con.execute(q,values);
+                else
+                {
+                    con.query(q, (err, results, fields) => 
+                    {
+                        if (err) 
+                        {
+                            debug.error("ERROR in MYSQL query "+q);
+                            debug.error("ERROR message "+err.sqlMessage);
+                
+                            if(view)
+                                debug.error("VIEW ",view.infos());
+
+                            if(mustRelease)
+                                this.releaseCon(con);
+                                                
+                            reject(err);
+                        }
+
+                        res = results;
+
+                        if(res?.insertId)
+                            resolve(res.insertId);
+
+                        if(mustRelease)
+                            this.releaseCon(con);
+                            
+                        resolve(results);
+                    }); 
+                }
+            });
+        } 
+        catch (error) 
+        {
+            throw error;
+        }  
+        finally 
+        {
+        }    
+    }    
+}
+
 class MySqlInstance extends FlowNode
 {
     constructor(inst) {
@@ -284,6 +406,10 @@ class MySqlInstance extends FlowNode
             {
                 this.conInfo = configSce.loadConfig(this.conPath);
             }
+
+            // overload DB name (used for sharing a secret config on several dbs)
+            if(this.config.database)
+                this.conInfo.MYSQL_DB = this.config.database;
         }   
         catch(err) {
             throw err;
@@ -302,10 +428,13 @@ class MySqlInstance extends FlowNode
             let conInfo = await this.loadConInfo();
 
             let isPool = !(conInfo.MYSQL_POOL===false);
+            let noPromise = this.config.no_promise || false;
 
             if(!this.conHandler)
             {
-                if(isPool)
+                if(noPromise)
+                    this.conHandler = new MySqlConNoPromise()
+                else if(isPool)
                     this.conHandler = new MySqlPool();
                 else
                     this.conHandler = new MySqlCon();
@@ -737,7 +866,11 @@ class MySqlInstance extends FlowNode
         return {fdefs,fkeys};
     }
 
-    async _fixMissingField(error,view) {
+    async _fixMissingField(error,view) 
+    {
+        if(!view)
+            return null;
+        
         const model = view.model();
         const table = this._collection(model);
         const fPrefix = view.fieldPrefix();
@@ -790,6 +923,9 @@ class MySqlInstance extends FlowNode
 
     async _fixMissingTable(error,view) 
     {
+        if(!view)
+            return null;
+
         let model = view.model();
         let table = this._collection(model);
 
