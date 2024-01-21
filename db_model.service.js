@@ -757,6 +757,32 @@ class DbModelInstance
         return this._db.findOne(where,options,this);
     }
 
+    loadFromData(doc,options={})
+    {
+        const model = this;
+        const view = model ? model.getView(options.view||options.$view) : null;
+        
+        let data={};
+        objectSce.forEachSync(view.fields(),(f,n) => {
+            let type = f.type();
+
+            data[n] = doc[n] ||
+                ((type=='string') ? '' :
+                (type=='integer') ? 0  : '');
+        });
+
+        data = this._db._formatRecord(data,view,true);
+        let ret = {data};
+
+        if(options.withMeta)
+            ret.metadata = view.metadata();
+
+        if(options.withLocale)
+            ret.locale = view.locale();
+
+        return ret;
+    }
+    
     getEmpty(options={}) {
         return this._db.getEmpty(options,this);
     }

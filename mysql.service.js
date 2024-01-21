@@ -569,7 +569,7 @@ class MySqlInstance extends FlowNode
         return qs2;
     }
 
-    _formatRecord(rec,view) {
+    _formatRecord(rec,view,forceEnumLabel=false) {
         const format = view.getFieldsFormats();
         const locale = view.locale();
         const schema = view.schema();
@@ -587,14 +587,14 @@ class MySqlInstance extends FlowNode
                 const func = "_format_"+v;
                 const fdesc = view.field(k);
                 if(typeof this[func] == "function")
-                    this[func](k,rec,fdesc,locale);
+                    this[func](k,rec,fdesc,locale,forceEnumLabel);
             }
         });
 
         return rec;
     }
 
-    _format_json(fname,rec,fdesc,locale) 
+    _format_json(fname,rec,fdesc,locale,forceEnumLabel=false) 
     {
         if(rec[fname])
         {
@@ -602,7 +602,7 @@ class MySqlInstance extends FlowNode
         }
     }
 
-    _format_base64(fname,rec,fdesc,locale) 
+    _format_base64(fname,rec,fdesc,locale,forceEnumLabel=false) 
     {
         if(rec[fname])
         {
@@ -610,9 +610,12 @@ class MySqlInstance extends FlowNode
         }
     }
     
-    _format_enum(fname,rec,fdesc,locale) 
+    _format_enum(fname,rec,fdesc,locale,forceEnumLabel=false) 
     {
         let v = rec[fname];
+        if(v == undefined)
+            return;
+        
         if(v && typeof (rec[fname+'__html']) != "undefined")
         {
             rec[fname] = {
@@ -623,7 +626,7 @@ class MySqlInstance extends FlowNode
         }
         else
         {
-            if(v && v.value && v.html)
+            if(!forceEnumLabel && v && v.value && v.html)
                 rec[fname] = v;
             else
             {
