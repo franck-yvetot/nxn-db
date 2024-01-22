@@ -771,7 +771,7 @@ class DbModelInstance
                 (type=='integer') ? 0  : '');
         });
 
-        data = this._db._formatRecord(data,view,true);
+        data = this._db._formatRecord(data,view,false);
         let ret = {data};
 
         if(options.withMeta)

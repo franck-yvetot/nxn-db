@@ -615,7 +615,7 @@ class MySqlInstance extends FlowNode
         let v = rec[fname];
         if(v == undefined)
             return;
-        
+
         if(v && typeof (rec[fname+'__html']) != "undefined")
         {
             rec[fname] = {
@@ -630,9 +630,17 @@ class MySqlInstance extends FlowNode
                 rec[fname] = v;
             else
             {
-                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+                let v2;
+                if(typeof v == "object")
+                {
+                    v2 = v.value;
+                }
+                else
+                    v2 = v;
+
+                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v2,",",locale)) || '';
                 rec[fname] = {
-                    value:v,
+                    value:v2,
                     html
                 };    
             }
