@@ -728,6 +728,68 @@ class MySqlInstance extends FlowNode
         };
     }    
 
+    _format_enum_multi_fields(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        
+        let value,html;
+        if(typeof v == "object")
+        {
+            value = v.value || "";
+            html = v.html || "";
+        }
+
+        if(value && html)
+        {
+            try 
+            {
+                let fields = {};
+                let values = value.split("|");
+                let html2 = html.split(/,[ ]?/);
+                let i = 0;
+                for (let i=0;i< values.length;i++) 
+                {
+                    let v2 = values[i];
+                    if(!v2)
+                        continue;
+
+                    let v3 = v2.split("@");
+                    if(v3.length != 2)
+                        continue;
+
+                    let afname2 = v3[1].split('.');
+                    let fname2 = afname2[0];
+                    let propDef = afname2.length == 2 ? afname2[1] : "properties";
+                    if(!fields[fname2])
+                        fields[fname2] = {value:[],html:[],propDef};
+
+                    fields[fname2].value.push(v3[0]);
+                    //fields[fname2].html.push(html2[i] || "");
+                    fields[fname2].html.push(v3[0] || "");
+                }
+
+                delete rec[fname];
+
+                for (let fname3 in fields)
+                {
+                    let field = fields[fname3];
+                    let v4 = "|"+field.value.join("|")+"|";
+                    let hmtl4 = field.html.join(",");
+                    rec[fname3] = {value:v4,html:hmtl4,propDef:field.propDef||null};
+                }
+            }
+            catch(error)
+            {
+            }
+        }
+        else {
+            rec[fname] = {
+                value:'',
+                html:''
+            };             
+        }
+    } 
+
     _format_enum_upper_initial_html(fname,rec,fdesc,locale) 
     {
         let v = rec[fname];
