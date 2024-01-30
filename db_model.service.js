@@ -5,6 +5,7 @@ const {objectSce} = require("@nxn/ext");
 const invalidParam = (s) => { throw new Error(s); }
 const FlowNode = require("@nxn/boot/node");
 
+/** field metadata including name, type, etc. */
 class SchemaField 
 {
     constructor(name,desc,locale=null) {
@@ -111,6 +112,7 @@ class SchemaField
     }
 }
 
+/** field metadata for enums (static or dynamic) */
 class SchemaFieldEnum extends SchemaField {
     constructor(name,desc,locale=null) {
         super(name,desc,locale);
@@ -153,7 +155,7 @@ class SchemaFieldEnum extends SchemaField {
 }
 
 
-/** a view is based on the schema definition and alos on specific model properties
+/** a view is based on the schema definition and also on specific model properties
  *  A view defined in the schema, can have different properties (ex. field names of the database) 
  *  for each model instance.
  */
@@ -498,6 +500,11 @@ class DbView
     }
 }
 
+/**
+ * db schema  holds the list of fields, views that are subsets of these fields, and sql requests.
+ * 
+ * the schema is defined as a json or yaml descriptor.
+ */
 class DbSchema
 {
     constructor(desc) {
@@ -637,6 +644,11 @@ class DbSchema
     }
 }
 
+/**
+ * db model instance that executes queries based on schema views.
+ * A schema holds the list of fields, views that are subsets of these fields, and sql requests.
+ * The db model execute queries via an interface which is similar to mongodb (find, findOne, etc.).
+ */
 class DbModelInstance
 {
     constructor(name,schema,db,locale,config,modelManager) {
@@ -822,6 +834,10 @@ class DbModelInstance
     }  
 }
 
+/** db model : loads a record schema (metadata including fields, views etc.) and
+ * is attached to a db engine instance. A DB model is used to instanciate db model instances
+ * that perfom queries.
+ */
 class DbModel extends FlowNode
 {
     constructor(instName,modelManager) {
@@ -883,6 +899,7 @@ class DbModel extends FlowNode
     }
 }
 
+/** factory for instanciating a db model */
 class DbModelSce
 {
     constructor () {
@@ -917,6 +934,10 @@ class DbModelSce
 
 const DB_SCE = new DbModelSce();
 module.exports = DB_SCE;
+
+module.exports.SchemaField = SchemaField;
+module.exports.SchemaFieldEnum = SchemaFieldEnum;
+module.exports.DbView = DbView;
 module.exports.DbModelInstance = DbModelInstance;
-module.exports.DbModelSce = DbModelSce;
 module.exports.DbModel = DbModel;
+module.exports.DbModelSce = DbModelSce;
