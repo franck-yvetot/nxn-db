@@ -1594,3 +1594,7 @@ class MySqlSce
 }
 
 module.exports = new MySqlSce();
+
+module.exports.MySqlHandlerBase = MySqlHandlerBase;
+module.exports.MySqlInstance = MySqlInstance;
+module.exports.MySqlSce = MySqlSce;
