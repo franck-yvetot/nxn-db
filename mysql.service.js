@@ -616,7 +616,7 @@ class MySqlInstance extends FlowNode
         if(v == undefined)
             return;
 
-        if(v && typeof (rec[fname+'__html']) != "undefined")
+        if((v || v==='') && typeof (rec[fname+'__html']) != "undefined")
         {
             rec[fname] = {
                 value:v,
