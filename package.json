@@ -3,7 +3,9 @@
   "version": "1.0.81",
   "description": "DB services confurable with nxn application config",
   "main": "index.js",
-  "scripts": {},
+  "scripts": {
+    "build": "npm version patch && git push && npm publish"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/franck-yvetot/nxn-db.git"
