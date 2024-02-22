@@ -651,11 +651,23 @@ class DbSchema
  */
 class DbModelInstance
 {
-    constructor(name,schema,db,locale,config,modelManager) {
-        this.init(name,schema,db,locale,config,modelManager);
+    /**
+     * 
+     * @param {string} name 
+     * @param {*} schema 
+     * @param {*} db 
+     * @param {*} locale 
+     * @param {*} config 
+     * @param {*} modelManager 
+     * @param {*} clientId = null optional client id to use for data segmentation
+     */
+    constructor(name,schema,db,locale,config,modelManager,clientId) 
+    {
+        this.init(name,schema,db,locale,config,modelManager,clientId);
     }
 
-    init(name,schema,db,locale,config,modelManager) {
+    init(name,schema,db,locale,config,modelManager,clientId = null) 
+    {
         if(!config || this._config)
             return;
 
@@ -663,6 +675,7 @@ class DbModelInstance
         this._config=config;
         this._db = db;
         this._schema = schema;
+        this.clientId = clientId;
         
         // if selected lang, get locale for this lang, else, get multi linguage locale
         this._locale = locale;
@@ -704,6 +717,11 @@ class DbModelInstance
 
     collection() {
         return this._schema.collection();
+    }
+
+    /** returns a client id if exists, or null */
+    getClientId() {
+        return this.clientId;
     }
 
     hasView(n) {
@@ -882,7 +900,7 @@ class DbModel extends FlowNode
      * @param {*} lang 
      * @returns {DbModelInstance}
      */
-    instance(lang=null) {
+    instance(lang=null,clientId=null) {
         const name = this._schema.name();
         const dbId = this._db.id && this._db.id() || '';
         const key = name + '_'+lang + '_'+dbId;
@@ -892,7 +910,8 @@ class DbModel extends FlowNode
             this.instances[key] = new DbModelInstance(
                 this._schema.name(),this._schema,this._db,
                 this.locale.localeByLang(lang),
-                this.config,this._modelManager);
+                this.config,this._modelManager,
+                clientId);
         }
 
         return this.instances[key];
