@@ -1,6 +1,6 @@
 {
   "name": "@nxn/db",
-  "version": "1.0.82",
+  "version": "1.0.83",
   "description": "DB services confurable with nxn application config",
   "main": "index.js",
   "scripts": {
