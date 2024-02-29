@@ -1,6 +1,8 @@
 const debug = require("@nxn/debug")('FIRESTORE');
 const admin = require('firebase-admin');
+
 const Firestore = require('@google-cloud/firestore');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const {configSce, FlowNode} = require('@nxn/boot');
 const {objectSce} = require("@nxn/ext");
@@ -10,6 +12,15 @@ const FieldFormater = require('@nxn/db/field_formater.class');
 
 const formater = new FieldFormater();
 
+/**
+ * @config: 
+ *     upath: firestore@googleapi
+ *     conPath: .firestore
+ *     # apply_client_id = coll_prefix | coll_suffix | none | db
+ *     apply_client_id: coll_suffix
+ *     clientManager: clientManager
+ */
+
 class FireStoreInstance extends FlowNode
 {
     /**
@@ -17,6 +28,17 @@ class FireStoreInstance extends FlowNode
      *  
      * @type { "coll_suffix" | "coll_prefix" | "none" | "db"} */
     apply_client_id;
+
+    /** db by name
+     * @type {Record<string,any>}
+    */
+    dbByName = {};
+
+    /** default db */
+    db;
+
+    /** @type {import("../../clients/services/clientManager.service").IClientManager} */
+    clientManager; // injection
 
     constructor(inst) {
         super(inst);
@@ -72,7 +94,8 @@ class FireStoreInstance extends FlowNode
             return true; 
 
         // buckets config
-        try {            
+        try 
+        {            
             debug.log("Connecting to firestore ID="+this.instance());
             
             let serviceAccount = await this.loadConInfo();
@@ -82,14 +105,16 @@ class FireStoreInstance extends FlowNode
                 
             const projectId = serviceAccount.project_id;
 
-            let appName = this.config.application || "default";
+            // let appName = this.config.application || "default";
+            this.dbName = this.config.database || this.config.db || "default";
 
-            admin.initializeApp({
+            this.firebaseApp = admin.initializeApp({
                 credential: admin.credential.cert(serviceAccount),
                 databaseURL: `https://${projectId}.firebaseio.com`
             });
 
-            this.db = admin.firestore();        
+            // select the database
+            this.db = this.getDB(this.dbName);
             
             if(this.db)
                 debug.log("Firestore instance connected on project "+serviceAccount.project_id
@@ -109,7 +134,24 @@ class FireStoreInstance extends FlowNode
             throw err;
             // return Promise.reject({error:500,error:"cant conect to Firebase "+err});
         }
-    }  
+    }
+
+    /**
+     * get database by name
+     * 
+     * @param {*} dbName 
+     * @returns {*}
+     */
+    getDB(dbName = null)
+    {
+        if(this.dbByName[dbName])
+            return this.dbByName[dbName];
+
+        if(dbName && dbName != 'default')
+            return this.dbByName[dbName] = getFirestore(this.firebaseApp,dbName);     
+        else
+            return this.dbByName['default'] = getFirestore(this.firebaseApp);
+    }
 
     async collection(col) {
 
@@ -239,8 +281,13 @@ class FireStoreInstance extends FlowNode
      *  Details :
      *   If a client_id is provided in options or by the model, then add a suffix or prefix to the collection name.
      *   The db needs a "apply_client_id = "coll_suffix", "coll_prefix" for the client id to be applied.
+     * 
+     * @param {Object} options db options
+     * @param {*} model db model
+     * @returns {{colName:string,dbName:string}}
      */
-    _getCollectionName(options,model) {
+    _getCollectionName(options,model) 
+    {
         let col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
         if(!model.getClientId)
@@ -256,8 +303,40 @@ class FireStoreInstance extends FlowNode
                 col = col + "@" + clientId;
         }
 
-        return col;
-    }    
+        let dbName = null;
+        if(clientId && this.clientManager)
+        {
+            let cltInfos = this.clientManager.getClientInfosById(clientId);
+            let inst = this.id();
+            if(cltInfos[inst] && cltInfos[inst].database)
+            {
+                dbName = cltInfos[inst].database;
+            }
+        }
+
+        return {colName:col,dbName:dbName||'default'};
+    }
+    
+    /**
+     * get firestore collection, based on model/schema and client_id
+     * @param {*} options 
+     * @param {*} model 
+     * @returns {*}
+     */
+    getCollection(options,model) 
+    {
+        // get collection name (with client_id rules)
+        const {colName,dbName} = this._getCollectionName(options,model);
+
+        // get db (with client_id rules)
+        const db = this.getDB(dbName);
+
+        // get collection by name
+        let coll = db.collection(colName);
+
+        return {coll,db};
+    }
+    
 
     // map field OP value
     fieldWhere(fname,op='=',valueStr='$value',field) 
@@ -270,21 +349,15 @@ class FireStoreInstance extends FlowNode
     async findOne(query,options={},model=null) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
-        const col = this._getCollectionName(options,model);
         const orderBy = options.orderBy || null;
 
         try 
         {
             await this.connect();
-            let coll = this.db.collection(col);
-    
-            // fields
-            /*
-            let fields = view.fieldsNames();
-            if(fields)
-            coll.select(fields);
-            */
-    
+
+            // get db collection (based on model/schema/client_id)
+            let {coll} = this.getCollection(options,model);
+        
             let data;        
             if (query.id) 
             {
@@ -365,12 +438,14 @@ class FireStoreInstance extends FlowNode
   async find(query,options,model) 
   {
     const view = model ? model.getView(options.view||options.$view) : null;
-    const col = this._getCollectionName(options,model);
     const orderBy = options.orderBy || null;
     const cb = options.cb || null;
 
     await this.connect();
-    let coll = this.db.collection(col);
+
+    // get db collection (based on model/schema/client_id)
+    let {coll} = this.getCollection(options,model);
+
     let ret;
 
     if(options.test) 
@@ -481,10 +556,11 @@ class FireStoreInstance extends FlowNode
   async count(query,options,model) 
   {
     const view = model ? model.getView(options.view||options.$view) : null;
-    const col = this._getCollectionName(options,model);
 
     await this.connect();
-    let coll = this.db.collection(col);
+
+    // get db collection (based on model/schema/client_id)
+    let {coll} = this.getCollection(options,model);
 
     // where
     if(query && Object.keys(query).length > 0)
@@ -501,10 +577,11 @@ class FireStoreInstance extends FlowNode
   async insertOne(doc,options,model) 
   {
     const view = model ? model.getView(options.view||options.$view) : null;
-    const col = this._getCollectionName(options,model);
 
     await this.connect();
-    let coll = this.db.collection(col);
+
+    // get db collection (based on model/schema/client_id)
+    let {coll} = this.getCollection(options,model);
 
     try 
     {
@@ -536,14 +613,17 @@ class FireStoreInstance extends FlowNode
         return null;
 
     const view = model ? model.getView(options.view||options.$view||"record") : this.config;
-    const col = this._getCollectionName(options,model);
+
+    // get db collection (based on model/schema/client_id)
+    let {coll,db} = this.getCollection(options,model);
 
     await this.connect();
 
-    var batch = this.db.batch();
-    docs.forEach((doc) => {
+    var batch = db.batch();
+    docs.forEach((doc) => 
+    {
         let data = {...doc}; // clean class proto not accepted by Firestore
-        batch.set(this.db.collection(col).doc(), data);
+        batch.set(coll.doc(), data);
     });
 
     // Commit the batch
@@ -555,10 +635,12 @@ class FireStoreInstance extends FlowNode
   async updateOne(query,data,addIfMissing=false,options,model)
   {
     const view = model ? model.getView(options.view||options.$view) : this.config;
-    const col = this._getCollectionName(options,model);
 
     try 
     {
+        // get db collection (based on model/schema/client_id)
+        let {coll} = this.getCollection(options,model);
+
         let res = await this.find(query,options,model);
     
         if(res && res.data) 
@@ -580,7 +662,7 @@ class FireStoreInstance extends FlowNode
             });
             */
     
-            await this.db.collection(col).doc(id).update(doc2);
+            await coll.doc(id).update(doc2);
         }        
         return 1;
     } 
@@ -594,19 +676,20 @@ class FireStoreInstance extends FlowNode
     async updateMany(query,docs,addIfMissing=true,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = this._getCollectionName(options,model);
 
         if(docs.length == 0)
             return null;
 
         let res = await this.find(query,options,model);
 
-        let coll = this.db.collection(col);
+        // get db collection (based on model/schema/client_id)
+        let {coll,db} = this.getCollection(options,model);
+
         let fields = view.fields();
 
         if(docs) 
         {
-            var batch = this.db.batch();
+            var batch = db.batch();
             docs.forEach((doc) => 
             {
                 // clean/complete document
@@ -636,18 +719,18 @@ class FireStoreInstance extends FlowNode
 
     async deleteOne(query,options, model) 
     {
-        const col = this._getCollectionName(options,model);
         let res = await this.findOne(query,options,model);
 
         try 
         {
+            // get db collection (based on model/schema/client_id)
+            let {coll} = this.getCollection(options,model);
+
             if(res && res.data) 
             {
                 let doc = res.data;
                 let id = doc.id || doc.oid;
-    
-                let coll = this.db.collection(col);
-    
+        
                 await coll.doc(id).delete();
             }
                 
@@ -662,7 +745,10 @@ class FireStoreInstance extends FlowNode
     {
         await this.connect();
 
-        const batch = this.db.batch();
+        // get db collection (based on model/schema/client_id)
+        let {coll,db} = this.getCollection(options,model);
+
+        const batch = db.batch();
 
         options.cb = (doc) => 
         {
