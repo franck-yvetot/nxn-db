@@ -5,6 +5,8 @@ const {objectSce} = require("@nxn/ext");
 const invalidParam = (s) => { throw new Error(s); }
 const FlowNode = require("@nxn/boot/node");
 
+const {DbDecorator} = require("./db_decorator.service");
+
 /** field metadata including name, type, etc. */
 class SchemaField 
 {
@@ -661,12 +663,12 @@ class DbModelInstance
      * @param {*} modelManager 
      * @param {*} clientId = null optional client id to use for data segmentation
      */
-    constructor(name,schema,db,locale,config,modelManager,clientId) 
+    constructor(name,schema,db,locale,config,modelManager,decorator,clientId) 
     {
-        this.init(name,schema,db,locale,config,modelManager,clientId);
+        this.init(name,schema,db,locale,config,modelManager,decorator,clientId);
     }
 
-    init(name,schema,db,locale,config,modelManager,clientId = null) 
+    init(name,schema,db,locale,config,modelManager,decorator,clientId = null) 
     {
         if(!config || this._config)
             return;
@@ -676,6 +678,7 @@ class DbModelInstance
         this._db = db;
         this._schema = schema;
         this.clientId = clientId;
+        this.decorator = decorator;
         
         // if selected lang, get locale for this lang, else, get multi linguage locale
         this._locale = locale;
@@ -780,11 +783,19 @@ class DbModelInstance
     findById(id,options={}) {
         const where={};
         where[this._fId]=id;
-        return this._db.findOne(where,options,this);
+        
+        if(this.decorator && this.decorator.findById)
+            return this.decorator.findOne(where,options,this,this._db);
+        else
+            return this._db.findOne(where,options,this);            
     }
 
-    findOne(where={},options={}) {
-        return this._db.findOne(where,options,this);
+    findOne(where={},options={}) 
+    {
+        if(this.decorator && this.decorator.findOne)
+            return this.decorator.findOne(where,options,this,this._db);
+        else
+            return this._db.findOne(where,options,this);
     }
 
     loadFromData(doc,options={})
@@ -813,42 +824,75 @@ class DbModelInstance
         return ret;
     }
     
-    getEmpty(options={}) {
-        return this._db.getEmpty(options,this);
+    getEmpty(options={}) 
+    {
+        if(this.decorator && this.decorator.getEmpty)
+            return this.decorator.getEmpty(options,this,this._db);
+        else
+            return this._db.getEmpty(options,this);
     }
 
-    async find(where={},options={}) {
-        return this._db.find(where,options,this);
+    async find(where={},options={}) 
+    {
+        if(this.decorator && this.decorator.find)
+            return this.decorator.find(where,options,this,this._db);
+        else
+            return this._db.find(where,options,this);
     }
 
     async count(where={},options={}) {
-        return this._db.count(where,options,this);
+        if(this.decorator && this.decorator.find)
+            return this.decorator.count(where,options,this,this._db);
+        else
+            return this._db.count(where,options,this);
     }
 
-    async insertOne(doc,options={}) {
-        return this._db.insertOne(doc,options,this);
+    async insertOne(doc,options={}) 
+    {
+        if(this.decorator && this.decorator.insertOne)
+            return this.decorator.insertOne(doc,options,this,this._db);
+        else
+            return this._db.insertOne(doc,options,this);
     }
 
-    async insertMany(docs,options={}) {
-        return this._db.insertMany(docs,options,this);
+    async insertMany(docs,options={}) 
+    {
+        if(this.decorator && this.decorator.insertMany)
+            return this.decorator.insertMany(docs,options,this,this._db);
+        else
+            return this._db.insertMany(docs,options,this);
     }
 
-    async updateOne(where,doc,options={}) {
-        return this._db.updateOne(where,doc,false,options,this);
-        //const addIfMissing = !!(options.upsert);
+    async updateOne(where,doc,options={}) 
+    {
+        if(this.decorator && this.decorator.updateOne)
+            return this.decorator.updateOne(where,doc,false,options,this,this._db);
+        else
+            return this._db.updateOne(where,doc,false,options,this);
     }
 
-    async updateMany(where,doc,options={}) {
-        //const addIfMissing = !!(options.upsert);
-        return this._db.updateMany(where,doc,options,this);
+    async updateMany(where,doc,options={}) 
+    {
+        if(this.decorator && this.decorator.updateMany)
+            return this.decorator.updateMany(where,doc,options,this);
+        else
+            return this._db.updateMany(where,doc,options,this);
     }
 
-    async deleteOne(doc,options={}) {
-        return this._db.deleteOne(doc,options,this);
+    async deleteOne(doc,options={}) 
+    {
+        if(this.decorator && this.decorator.updateMany)
+            return this.decorator.deleteOne(doc,options,this);
+        else
+            return this._db.deleteOne(doc,options,this);
     }
 
-    async deleteMany(where,options={}) {
-        return this._db.deleteMany(where,options,this);
+    async deleteMany(where,options={}) 
+    {
+        if(this.decorator && this.decorator.updateMany)
+            return this.decorator.deleteMany(where,options,this);
+        else
+            return this._db.deleteMany(where,options,this);
     }  
 }
 
@@ -867,8 +911,10 @@ class DbModel extends FlowNode
         super.init(config,ctxt,injections);        
 
         this._db = this.getInjection('db') || this.invalidParam("no db injection");
-        // this._locale = this.getInjection('locale') || null; // done in FlowNode
+
         this._schema = new DbSchema(config.schema,this._locale);
+
+        this.decorator = this.getInjection("decorator");
 
         // store collection name for automatic creation of tables in db
         const coll = this._schema.collection();
@@ -908,9 +954,13 @@ class DbModel extends FlowNode
         if(!this.instances[key])
         {
             this.instances[key] = new DbModelInstance(
-                this._schema.name(),this._schema,this._db,
+                this._schema.name(),
+                this._schema,
+                this._db,
                 this.locale.localeByLang(lang),
-                this.config,this._modelManager,
+                this.config,
+                this._modelManager,
+                this.decorator,
                 clientId);
         }
 
@@ -960,3 +1010,4 @@ module.exports.DbView = DbView;
 module.exports.DbModelInstance = DbModelInstance;
 module.exports.DbModel = DbModel;
 module.exports.DbModelSce = DbModelSce;
+module.exports.DbDecorator = DbDecorator;

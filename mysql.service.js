@@ -7,6 +7,9 @@ const mysql = require('mysql2/promise');
 
 const mysql2 = require('mysql2');
 
+module.exports.DbModelSce = DbModelSce;
+const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel} = require("./db_model.service")
+
 let pools = {};
 
 // MySQL Handler :  base class for connection and connection pool versions
@@ -510,6 +513,13 @@ class MySqlInstance extends FlowNode
       throw error;
     }    
 
+    /**
+     * 
+     * @param {string} query 
+     * @param {DbView} view 
+     * @param {boolean} withTablePrefix 
+     * @returns 
+     */
     _mapWhere(query,view,withTablePrefix=true) 
     {
         var where = "";
@@ -547,6 +557,13 @@ class MySqlInstance extends FlowNode
         return fname +" "+ operator +" "+valueStr;
     }
 
+    /**
+     * create limit clause
+     * 
+     * @param {*} limit 
+     * @param {*} skip 
+     * @returns 
+     */
     _mapLimit(limit=0,skip=0) 
     {
         let s='';
@@ -558,6 +575,14 @@ class MySqlInstance extends FlowNode
         return s;
     }
 
+    /**
+     * 
+     * @param {DbView} view 
+     * @param {string} viewName 
+     * @param {string} defaultQuery 
+     * @param {any} map 
+     * @returns 
+     */
     _buildQuery(view, viewName,defaultQuery,map) {
         let qs = (view && view.getQuery(viewName)) || (this.config.queries && this.config.queries[viewName]) 
         || defaultQuery;
@@ -569,6 +594,13 @@ class MySqlInstance extends FlowNode
         return qs2;
     }
 
+    /**
+     * 
+     * @param {*} rec 
+     * @param {string} view 
+     * @param {boolean} forceEnumLabel 
+     * @returns 
+     */
     _formatRecord(rec,view,forceEnumLabel=false) {
         const format = view.getFieldsFormats();
         const locale = view.locale();
@@ -594,6 +626,14 @@ class MySqlInstance extends FlowNode
         return rec;
     }
 
+    /**
+     * format value to json from text
+     * @param {*} fname 
+     * @param {*} rec 
+     * @param {*} fdesc 
+     * @param {*} locale 
+     * @param {*} forceEnumLabel 
+     */
     _format_json(fname,rec,fdesc,locale,forceEnumLabel=false) 
     {
         if(rec[fname])
@@ -610,6 +650,16 @@ class MySqlInstance extends FlowNode
         }
     }
     
+    /**
+     * format enum value as {html,value}
+     * use fname and fname__html fields to build value and html.
+     * @param {*} fname 
+     * @param {*} rec 
+     * @param {*} fdesc 
+     * @param {*} locale 
+     * @param {*} forceEnumLabel 
+     * @returns 
+     */
     _format_enum(fname,rec,fdesc,locale,forceEnumLabel=false) 
     {
         let v = rec[fname];
@@ -647,6 +697,14 @@ class MySqlInstance extends FlowNode
         }
     }
 
+    /**
+     * format as enum with email {value: <fname> ,html:<fname>__html, email: <fname>__email}
+     * 
+     * @param {*} fname 
+     * @param {*} rec 
+     * @param {*} fdesc 
+     * @param {*} locale 
+     */
     _format_enum_with_email(fname,rec,fdesc,locale) 
     {
         let v = rec[fname];
@@ -679,6 +737,48 @@ class MySqlInstance extends FlowNode
             }
         }
     }    
+
+    /**
+     * format as enum with a class {value: <fname> ,html:<fname>__html, cls: <fname>__cls}
+     * 
+     * @param {*} fname 
+     * @param {*} rec 
+     * @param {*} fdesc 
+     * @param {*} locale 
+     */
+    _format_enum_with_class(fname,rec,fdesc,locale) 
+    {
+        let v = rec[fname];
+        if(v && typeof (rec[fname+'__html']) != "undefined")
+        {
+            rec[fname] = {
+                value:v,
+                html:rec[fname+'__html']
+            };
+            delete rec[fname+'__html'];
+
+            // add class if exists
+            if(typeof (rec[fname+'__cls']) != "undefined")
+            {
+                rec[fname].cls = rec[fname+'__cls'];
+                delete rec[fname+'__cls'];
+            }
+        }
+        else
+        {
+            if(v && v.value && v.html)
+                rec[fname] = v;
+            else
+            {
+                let html = v && (fdesc && fdesc.getEnum && fdesc.getEnum(v,",",locale)) || '';
+                rec[fname] = {
+                    value:v,
+                    html,
+                    cls:''
+                };    
+            }
+        }
+    }        
 
     _format_enum_reg(fname,rec,fdesc,locale) 
     {
@@ -1267,6 +1367,14 @@ class MySqlInstance extends FlowNode
         return docs;
     }
 
+    /**
+     * create new record
+     * 
+     * @param {*} doc 
+     * @param {*} options 
+     * @param {*} model 
+     * @returns 
+     */
     async insertOne(doc,options,model) 
     {
 
