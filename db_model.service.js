@@ -468,11 +468,80 @@ class DbView
         if(typeof val == "object" && val && typeof val.value != "undefined")
             val = val.value;
 
+        if(val.map)
+        {
+            if(val.length > 0)
+            {
+                if(typeof val == "number")
+                {
+                    val = val.join(",");
+                }
+                else // if(typeof val == "string")
+                {
+                    val = "'"+val.join("','")+"'";
+                }
+            }            
+        }
+
         if(tablePrefix)
             return (this.desc.wherePrefix[fname] && this.desc.wherePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
         else
             return (this.desc.whereNoTablePrefix[fname] && this.desc.whereNoTablePrefix[fname].replace(/[$]val(ue)?/g,val)) || "";
     }
+
+    _mapWhere(query,view,coll,withTablePrefix=false) 
+    {
+        if(query)
+        {
+          const schema = view.schema();
+          const prefix = schema.fieldPrefix();
+      
+          objectSce.forEachSync(query, (value,name)=> 
+          {
+              let fw;
+              if(value.op && value.value)
+              {
+                  // CASE : value is in the form {op,value}
+                  // where operand ok (ex. with an array of values)
+                  fw = {fname:name, op:value.op, value:value.value};
+                  value = value.value;
+              }
+              else
+                  fw = view.getFieldWhere(name,value,withTablePrefix);
+  
+              if(fw)
+              {
+                  const fname = fw.fname;
+                  let op = fw.op || "==";
+                  if((op == '==' || op == 'in') && value.map)
+                  {
+                      op = "in";
+                      coll = coll.where(fname,op,value);      
+                  }
+                  else
+                  {
+                      const val = this._formatValue(fw.value,fw.type);
+                      coll = coll.where(fname,op,val);      
+                  }
+              }
+          });
+  
+          return coll;
+        }
+  
+        if(query && Object.keys(query).length > 0)
+        {
+          Object.keys(query).forEach((v,fname)=> 
+          {
+            const val = v.value||v;
+            const op = v.operator || "==";
+            coll = coll.where(fname,op,val);
+          });
+        }
+    
+  
+        return coll;
+      }    
 
     name() {
         return this._name;

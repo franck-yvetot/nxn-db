@@ -1056,7 +1056,17 @@ class MySqlInstance extends FlowNode
             if(fPrefix)
                 fname = fname.replace(new RegExp("^"+fPrefix),'');  
 
-            const fieldSchema = model.schema().field(fname);
+            const schema = model.schema();
+            let fieldSchema = schema.field(fname);
+            if(!fieldSchema)
+            {
+                const dftPrefix = schema.fieldPrefix()
+                
+                if(dftPrefix)
+                    fname = fname.replace(new RegExp("^"+dftPrefix),'');  
+                
+                fieldSchema = schema.field(fname);
+            }
 
             if(fieldSchema)
             {
