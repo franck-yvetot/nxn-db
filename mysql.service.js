@@ -7,8 +7,8 @@ const mysql = require('mysql2/promise');
 
 const mysql2 = require('mysql2');
 
+const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel,DbModelSce} = require("./db_model.service")
 module.exports.DbModelSce = DbModelSce;
-const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel} = require("./db_model.service")
 
 let pools = {};
 
