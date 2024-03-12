@@ -468,7 +468,7 @@ class DbView
         if(typeof val == "object" && val && typeof val.value != "undefined")
             val = val.value;
 
-        if(val.map)
+        if(val?.map)
         {
             if(val.length > 0)
             {
