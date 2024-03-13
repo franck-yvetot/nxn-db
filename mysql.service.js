@@ -10,6 +10,11 @@ const mysql2 = require('mysql2');
 const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel,DbModelSce} = require("./db_model.service")
 module.exports.DbModelSce = DbModelSce;
 
+/** 
+ * @typedef {import("nxn_db").TMySQLFindOptions} TMySQLFindOptions 
+ * @typedef {import("nxn_db").TMySQLResult} TMySQLResult 
+ * */
+
 let pools = {};
 
 // MySQL Handler :  base class for connection and connection pool versions
@@ -1152,16 +1157,70 @@ class MySqlInstance extends FlowNode
         return false;
     }
 
-    _collection(model) {
-        return model.collection() || this.config.table || this.config.collection;
+    _collection(model) 
+    {
+        let col = model.collection() || this.config.table || this.config.collection;
+
+        return col;
     }
+
+   /** 
+     *  get collection name, by using standard collection from model + adding a clientId prefix/suffix
+     *  if provided.
+     * 
+     *  Details :
+     *   If a client_id is provided in options or by the model, then add a suffix or prefix to the collection name.
+     *   The db needs a "apply_client_id = "coll_suffix", "coll_prefix" for the client id to be applied.
+     * 
+     * @param {Object} options db options
+     * @param {DbModelInstance} model db model
+     * @returns {{colName:string,dbName:string}}
+     */
+   _getCollectionName(options,model) 
+   {
+       let col = options.collection || model.collection() || this.config.table|| this.config.collection;
+
+       if(!model.getClientId)
+           debug.error("missing model.getClientId => check @nxn/db version");
+
+       const clientId = options.client_id || model.getClientId();
+
+       if(clientId && this.apply_client_id != "none")
+       {
+           if(this.apply_client_id == "coll_prefix")
+               col = clientId+"-"+col;
+           else if(this.apply_client_id == "coll_suffix")
+               col = col + "@" + clientId;
+       }
+
+       let dbName = null;
+       if(clientId && this.clientManager)
+       {
+           let cltInfos = this.clientManager.getClientInfosById(clientId);
+           let inst = this.id();
+           if(cltInfos[inst] && cltInfos[inst].database)
+           {
+               dbName = cltInfos[inst].database;
+           }
+       }
+
+       return {colName:col,dbName:dbName||'default'};
+   }    
 
     /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
 
+    /**
+     * 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * @param {string} view 
+     * @returns 
+     */
     async createCollection(options,model,view=null) 
     {
         if(!view)
             view = model ? model.getView(options && (options.view||options.$view)||"record") : null;
+
         const col = this._collection(model);
         const fields = model.schema().fields();
 
@@ -1190,6 +1249,13 @@ class MySqlInstance extends FlowNode
         return true;
     }
 
+    /**
+     * get an empty record
+     * 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * @returns {TMySQLResult}
+     */
     getEmpty(options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
@@ -1223,6 +1289,14 @@ class MySqlInstance extends FlowNode
         return ret;
     }
 
+    /**
+     * 
+     * @param {Record<string,any>} query 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<TMySQLResult>}
+     */
     async findOne(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view||"record") : null;
@@ -1269,6 +1343,13 @@ class MySqlInstance extends FlowNode
         return ret;
     }
 
+    /**
+     * 
+     * @param {Record<string,any>} query 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * @returns 
+     */
     async find(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
@@ -1346,6 +1427,14 @@ class MySqlInstance extends FlowNode
         return ret;
     }
 
+    /**
+     * 
+     * @param {Record<string,any>} query 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns 
+     */
     async count(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
@@ -1378,12 +1467,13 @@ class MySqlInstance extends FlowNode
     }
 
     /**
-     * create new record
+     * create new record and returns the id of the newly created record
      * 
-     * @param {*} doc 
+     * @param {TMySQLRecord} doc 
      * @param {*} options 
-     * @param {*} model 
-     * @returns 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
      */
     async insertOne(doc,options,model) 
     {
@@ -1451,6 +1541,15 @@ class MySqlInstance extends FlowNode
         return insertId;
     }
 
+    /**
+     * create new records
+     * 
+     * @param {TMySQLRecord[]} docs
+     * @param {TMySQLFindOptions} options
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
+     */
     async insertMany(docs,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
@@ -1478,10 +1577,10 @@ class MySqlInstance extends FlowNode
                 else
                     v = this._parseValue(doc[name],field);    
                 values.push(v);
-        });
+            });
     
             aValues.push("("+values.join(",")+")");
-    });
+        });
 
         let qs = this._buildQuery(
             view, 
@@ -1501,7 +1600,18 @@ class MySqlInstance extends FlowNode
         return res;
     }
 
-    async updateOne(query,doc,addIfMissing=false,options,model) {
+    /**
+     * update a record
+     * 
+     * @param {TMySQLRecord} doc 
+     * @param {boolean} addIfMissing 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
+     */
+    async updateOne(query,doc,addIfMissing=false,options,model) 
+    {
 
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
@@ -1593,50 +1703,66 @@ class MySqlInstance extends FlowNode
 
         const res = await this.query(qs,view);
     
-    return res;
-}
+        return res;
+    }
 
+    /**
+     * @param {*} query 
+     * @param {TMySQLRecord[]} docs 
+     * @param {boolean} addIfMissing 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
+     */
     async updateMany(query,docs,addIfMissing=true,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    if(docs.length == 0)
-        return null;
+        if(docs.length == 0)
+            return null;
 
         const where = this._mapWhere(query,view);
 
-    col = col || config.table;
-    let qs = this.queries.updateMany || 
-        (addIfMissing ? "REPLACE " : "UPDATE ") +col+" SET ";
-   
-    const doc = docs[0];
-    let fnames = [];
-    objectSce.forEachSync(doc,(value,name)=> {
-        fnames.push(name);
-    });
-   
-    let aValues = [];
-    docs.forEach(row => {
-        let values = [];
-        objectSce.forEachSync(row,(value)=> {
-            values.push(value);
+        col = col || config.table;
+        let qs = this.queries.updateMany || 
+            (addIfMissing ? "REPLACE " : "UPDATE ") +col+" SET ";
+    
+        const doc = docs[0];
+        let fnames = [];
+        objectSce.forEachSync(doc,(value,name)=> {
+            fnames.push(name);
         });
-        aValues.push("('"+values.join("','")+"')");
-    });
+    
+        let aValues = [];
+        docs.forEach(row => {
+            let values = [];
+            objectSce.forEachSync(row,(value)=> {
+                values.push(value);
+            });
+            aValues.push("('"+values.join("','")+"')");
+        });
 
-    let qvals = aValues.join(",");
-    qs += " ("+fnames.join(",")+") "+ "VALUES ("+qvals+")";
-    qs += where;
+        let qvals = aValues.join(",");
+        qs += " ("+fnames.join(",")+") "+ "VALUES ("+qvals+")";
+        qs += where;
 
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
         const res = await this.query(qs,view);
     
-    return res;
-}
+        return res;
+    }
 
+    /**
+     * @param {*} query 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
+     */
     async deleteOne(query,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
@@ -1676,26 +1802,32 @@ class MySqlInstance extends FlowNode
         const deleteRows = res.affectedRows||0;
     
         return deleteRows;
-}
+    }
 
+    /**
+     * @param {*} query 
+     * @param {TMySQLFindOptions} options 
+     * @param {DbModelInstance} model 
+     * 
+     * @returns {Promise<any>}
+     */
     async deleteMany(query,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
         const col = options.collection || model.collection() || this.config.table|| this.config.collection;
 
-    let qs = this.queries.deleteMany || "DELETE FROM "+col;
+        let qs = this.queries.deleteMany || "DELETE FROM "+col;
         
         const where = this._mapWhere(query,view);
-    qs += where;
+        qs += where;
 
         if(this.config.log)
             debug.log(qs+ " / $view="+view.name());
 
         const res = await this.query(qs,view);
     
-    return res;
-}  
-
+        return res;
+    }
 }
 
 class MySqlSce

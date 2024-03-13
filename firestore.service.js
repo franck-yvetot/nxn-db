@@ -9,6 +9,7 @@ const {objectSce} = require("@nxn/ext");
 
 const FieldFormater = require('@nxn/db/field_formater.class');
 // const objectService = require("@nxn/ext/object.service");
+const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel,DbModelSce} = require("./db_model.service")
 
 const formater = new FieldFormater();
 
@@ -139,7 +140,7 @@ class FireStoreInstance extends FlowNode
     /**
      * get database by name
      * 
-     * @param {*} dbName 
+     * @param {string} dbName 
      * @returns {*}
      */
     getDB(dbName = null)
@@ -153,6 +154,12 @@ class FireStoreInstance extends FlowNode
             return this.dbByName['default'] = getFirestore(this.firebaseApp);
     }
 
+    /**
+     * get firestore collection
+     * 
+     * @param {string} col 
+     * @returns 
+     */
     async collection(col) {
 
         await this.connect();

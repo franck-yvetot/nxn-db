@@ -6,10 +6,17 @@ const invalidParam = (s) => { throw new Error(s); }
 const FlowNode = require("@nxn/boot/node");
 
 const {DbDecorator} = require("./db_decorator.service");
+const {Locale, Lang_Locale} = require("./locale.service");
 
 /** field metadata including name, type, etc. */
 class SchemaField 
 {
+    /**
+     * 
+     * @param {string} name 
+     * @param {*} desc 
+     * @param {Lang_Locale} locale 
+     */
     constructor(name,desc,locale=null) {
         
         if(locale)
@@ -163,6 +170,13 @@ class SchemaFieldEnum extends SchemaField {
  */
 class DbView 
 {
+    /**
+     * 
+     * @param {string} name 
+     * @param {*} desc 
+     * @param {DbModelInstance} model 
+     * @param {string} lang 
+     */
     constructor(name,desc,model,lang=null) 
     {
         this.desc = desc;
@@ -722,6 +736,42 @@ class DbSchema
  */
 class DbModelInstance
 {
+    /** @type {string} */
+    _name;
+
+    /** db handler */
+    _db;
+
+    /**
+     * @type {DbSchema}
+     */
+    _schema;
+
+    /** @type {string} */
+    clientId;
+    
+    /**
+     * @type {DbDecorator}
+     */
+    decorator;
+    
+    /** if selected lang, get locale for this lang, else, get multi linguage locale */
+    _locale;
+
+    /**
+     * @type {string}
+     */
+    _fId;
+
+    /**
+     * @type {string}
+     */
+
+    /**
+     * 
+     */
+    _modelManager;
+
     /**
      * 
      * @param {string} name 

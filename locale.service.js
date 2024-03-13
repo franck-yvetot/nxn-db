@@ -119,3 +119,5 @@ class LocaleFactory
 }
 
 module.exports = new LocaleFactory();
+module.exports.Locale = Locale;
+module.exports.Lang_Locale = Lang_Locale;
