@@ -1061,14 +1061,25 @@ class DbModel extends FlowNode
     }
 
     /**
-     * returns a db model instance
+     * returns a db model instance. Each instance is unique by :
+     * - schema name
+     * - lang (optional)
+     * - database instance name (based on nxn component id)
+     * - client id (optional)
+     * 
      * @param {*} lang 
+     * @param {*} [clientId=null] 
+     * 
      * @returns {DbModelInstance}
      */
-    instance(lang=null,clientId=null) {
+    instance(lang=null,clientId=null) 
+    {
+        if(!clientId)
+            clientId = process.env.GED_CLIENT_ID || null;
+
         const name = this._schema.name();
         const dbId = this._db.id && this._db.id() || '';
-        const key = name + '_'+lang + '_'+dbId;
+        const key = name + '_'+(lang || '') + '_'+dbId+'_'+(clientId||'');
 
         if(!this.instances[key])
         {

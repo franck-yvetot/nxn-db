@@ -1,3 +1,4 @@
+// @ts-check
 const debug = require("@nxn/debug")('MYSQL_SCE');
 const {configSce, FlowNode} = require('@nxn/boot');
 const {objectSce} = require("@nxn/ext");
@@ -377,6 +378,17 @@ class MySqlConNoPromise extends MySqlHandlerBase
 
 class MySqlInstance extends FlowNode
 {
+    /** @type {import("../../clients/services/clientManager.service").IClientManager} */
+    clientManager; // injection
+
+    /**
+     * collection name and database name of a collection.
+     * Uses collection base name and database, using client_id mapping.
+     * 
+     *  @type {Record<string,{colName,dbName}>} 
+     * */
+    _collectionsMap = {}
+
     constructor(inst) {
         super(inst);
     } 
@@ -386,7 +398,7 @@ class MySqlInstance extends FlowNode
         if(!config || this.config)
             return;
 
-        super.init(config,ctxt,injections);
+        super.init(config,ctxt,injections,true);
 
         this.conHandler = null;
 
@@ -520,7 +532,7 @@ class MySqlInstance extends FlowNode
 
     /**
      * 
-     * @param {string} query 
+     * @param {Record<string,any>} query 
      * @param {DbView} view 
      * @param {boolean} withTablePrefix 
      * @returns 
@@ -1050,7 +1062,8 @@ class MySqlInstance extends FlowNode
             return null;
         
         const model = view.model();
-        const table = this._collection(model);
+        const {colName,dbPrefix} = this._collection(model);
+        
         const fPrefix = view.fieldPrefix();
 
         const matches = error.message.match(/Unknown column '([^']+)' in 'field list'/);
@@ -1085,7 +1098,7 @@ class MySqlInstance extends FlowNode
                         'add_field',
                         "ALTER TABLE %table% ADD COLUMN %field_def%",
                             {
-                                table,
+                                table: dbPrefix+colName,
                                 field_def: def
                             }
                     );
@@ -1099,10 +1112,9 @@ class MySqlInstance extends FlowNode
                         return true;
                 }
             }
-            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+table+
+
+            throw new Error("cant fix SQL query or ALTER add field "+fname+" to table "+dbPrefix+colName+
                 " related to view "+view.name()+" in model "+model.name());
-            // something went wrong
-            return false;
         }
 
         // something went wrong
@@ -1115,7 +1127,8 @@ class MySqlInstance extends FlowNode
             return null;
 
         let model = view.model();
-        let table = this._collection(model);
+        let {colName,dbPrefix} = this._collection(model);
+        let table = colName;
 
         const matches = error.message.match(/Table '([^.]+).([^']+)' doesn't exist/);
         if(matches)
@@ -1123,9 +1136,8 @@ class MySqlInstance extends FlowNode
             // get field schema 
             let dbNname = matches[1];
             let missingTable = matches[2];
-            if(missingTable != table)
-            {
-                
+            if(missingTable != colName && (dbPrefix ? dbPrefix == dbNname : true))
+            {                
                 model = model.modelManager().getModelByCollection(missingTable);
                 if(model)
                 {
@@ -1138,7 +1150,7 @@ class MySqlInstance extends FlowNode
             if(missingTable == table)
             {
                 // missng table is the current view schema
-                const res = this.createCollection(null,model,view);
+                const res = await this.createCollection(null,model,view);
                 if(res)
                 {
                     debug.log("Table created with success "+missingTable);
@@ -1157,54 +1169,70 @@ class MySqlInstance extends FlowNode
         return false;
     }
 
+    /**
+     * 
+     * @param {*} model 
+     * @returns {{colName,dbPrefix}}
+     */
     _collection(model) 
     {
         let col = model.collection() || this.config.table || this.config.collection;
 
-        return col;
+        let {colName,dbName, dbPrefix} = this._getCollectionName(col,model);
+        debug.log("MySQL table name: "+ dbPrefix+colName);
+
+        return {colName,dbPrefix};
     }
 
    /** 
-     *  get collection name, by using standard collection from model + adding a clientId prefix/suffix
-     *  if provided.
+     *  get collection name, dbName and dbPrefix, by using standard collection from model 
+     *  + adding database based on clientId if any. Otherwise dbPrefix == ""
+     * 
+     * Uses a cache so that the mapping names are only processed once (first use)
      * 
      *  Details :
-     *   If a client_id is provided in options or by the model, then add a suffix or prefix to the collection name.
-     *   The db needs a "apply_client_id = "coll_suffix", "coll_prefix" for the client id to be applied.
+     *   If a client_id is provided in the model, check the client configuration to get database.
      * 
-     * @param {Object} options db options
+     *   The db needs a "apply_client_id = "database_prefix", "database_suufix" for the client id to be applied.
+     *   ex. ged_<client_id> (database suffix), or <client_id>_ged (database prefix)
+     * 
      * @param {DbModelInstance} model db model
-     * @returns {{colName:string,dbName:string}}
+     * 
+     * @returns { {colName:string,dbName:string,dbPrefix:string} }
      */
-   _getCollectionName(options,model) 
+   _getCollectionName(colName,model) 
    {
-       let col = options.collection || model.collection() || this.config.table|| this.config.collection;
-
-       if(!model.getClientId)
-           debug.error("missing model.getClientId => check @nxn/db version");
-
-       const clientId = options.client_id || model.getClientId();
-
-       if(clientId && this.apply_client_id != "none")
+       if(!this._collectionsMap[colName])
        {
-           if(this.apply_client_id == "coll_prefix")
-               col = clientId+"-"+col;
-           else if(this.apply_client_id == "coll_suffix")
-               col = col + "@" + clientId;
-       }
+            const clientId = model.getClientId();
+            let dbName = null;
+            let dbPrefix = null      
+            if(clientId && this.clientManager)
+            {
+                let cltInfos = this.clientManager.getClientInfosById(clientId,"mysql");
 
-       let dbName = null;
-       if(clientId && this.clientManager)
-       {
-           let cltInfos = this.clientManager.getClientInfosById(clientId);
-           let inst = this.id();
-           if(cltInfos[inst] && cltInfos[inst].database)
-           {
-               dbName = cltInfos[inst].database;
-           }
+                if(cltInfos && cltInfos.database)
+                {
+                     dbName = cltInfos.database;
+                     
+                     if(cltInfos.apply_client_id == "database_suffix")
+                         dbName += clientId;
+                     else if(cltInfos.apply_client_id == "database_prefix")
+                         dbName = dbName+clientId;
+     
+                     if(dbName)
+                        dbPrefix = dbName+"."
+                }
+            }
+            else
+            {
+                dbPrefix = "";
+            }
+     
+            this._collectionsMap[colName] = {colName,dbName,dbPrefix};
        }
-
-       return {colName:col,dbName:dbName||'default'};
+       
+       return this._collectionsMap[colName];
    }    
 
     /* ============ SUPPORT INTERFACE UNIFIEE BASEE SUR MONGODB ================= */
@@ -1221,7 +1249,7 @@ class MySqlInstance extends FlowNode
         if(!view)
             view = model ? model.getView(options && (options.view||options.$view)||"record") : null;
 
-        const col = this._collection(model);
+        const {colName,dbPrefix} = this._collection(model);
         const fields = model.schema().fields();
 
         const {fdefs,fkeys} = this._mapFieldsTypes(fields);
@@ -1236,7 +1264,8 @@ class MySqlInstance extends FlowNode
             'create_collection',
             "CREATE TABLE IF NOT EXISTS %table% (%fields_def%%fields_keys%)",
                 {
-                    table : col,
+                    table : dbPrefix+colName,
+                    db_:dbPrefix,
                     fields_def,
                     fields_keys
                 }
@@ -1300,7 +1329,8 @@ class MySqlInstance extends FlowNode
     async findOne(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view||"record") : null;
-        const col = options.collection || model.collection() || this.config.table || this.config.collection;
+        // const col = options.collection || model.collection() || this.config.table || this.config.collection;
+        const {dbPrefix,colName} = this._collection(model);
 
         const where = this._mapWhere(query,view);
 
@@ -1314,7 +1344,8 @@ class MySqlInstance extends FlowNode
             'findOne',
             "select %fields% from %table% %where% %limit%",
                 {
-                    table : col,
+                    table : dbPrefix+colName,
+                    db_:dbPrefix,
                     fields: view.fieldsNames(true) || '',
                     where: where,
                     WHERE:(where ? where : "WHERE 1=1"),
@@ -1353,7 +1384,7 @@ class MySqlInstance extends FlowNode
     async find(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : null;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        const {dbPrefix,colName} = this._collection(model);
 
         const where = this._mapWhere(query,view,true);
 
@@ -1372,8 +1403,9 @@ class MySqlInstance extends FlowNode
             'find',
             "%select% %fields% from %TABLE% %where% %limit%",
                 {
-                    table : col,
-                    TABLE: col+' '+view.tableAlias(),
+                    table : dbPrefix+colName,
+                    db_:dbPrefix,
+                    TABLE: dbPrefix+colName+' '+view.tableAlias(),
                     fields: view.fieldsNames(true) || '',
                     where: where,
                     WHERE:(where ? where : "WHERE 1=1"),
@@ -1438,7 +1470,8 @@ class MySqlInstance extends FlowNode
     async count(query,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        // const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        const {colName,dbName} = this._collection(model);
 
         const where = this._mapWhere(query,view,true);
 
@@ -1479,7 +1512,8 @@ class MySqlInstance extends FlowNode
     {
 
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        // const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        const {colName,dbName} = this._collection(model);
 
         const variables = options.variables || {};
 
@@ -1612,9 +1646,9 @@ class MySqlInstance extends FlowNode
      */
     async updateOne(query,doc,addIfMissing=false,options,model) 
     {
-
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        // const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        const {dbPrefix,colName} = this._collection(model);
 
         let fields = view.fields();
         
@@ -1657,8 +1691,11 @@ class MySqlInstance extends FlowNode
                         op:op,
                         update:op,
                         replace:op,
-                        table : col,
-                        TABLE: col, // +' '+view.tableAlias(),
+
+                        table : dbPrefix+colName,
+                        TABLE: dbPrefix+colName, // +' '+view.tableAlias(),
+                        db_:dbPrefix,
+
                         fields:view.fieldsNamesUpdate(true).join(','),
                         values:values.join(','),
     
@@ -1684,13 +1721,17 @@ class MySqlInstance extends FlowNode
                     {
                         op:op,
                         update:op,
-                        table : col,
-                        TABLE: col, // +' '+view.tableAlias(),
+
+                        table : dbPrefix+colName,
+                        TABLE: dbPrefix+colName, // +' '+view.tableAlias(),
+                        db_:dbPrefix,
+
                         fields: view.fieldsNamesUpdate(true),
                         fields_values:fields_values,
     
                         where: where,
                         WHERE:(where ? where : "WHERE 1=1"),
+
                         limit: qlimit,
                         ...query,
                         ...doc
@@ -1718,16 +1759,18 @@ class MySqlInstance extends FlowNode
     async updateMany(query,docs,addIfMissing=true,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        // const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        let {dbPrefix,colName} = this._collection(model);
 
         if(docs.length == 0)
             return null;
 
         const where = this._mapWhere(query,view);
 
-        col = col || config.table;
-        let qs = this.queries.updateMany || 
-            (addIfMissing ? "REPLACE " : "UPDATE ") +col+" SET ";
+        colName = colName || this.config.table;
+
+        let qs = this.queries?.updateMany || 
+            (addIfMissing ? "REPLACE " : "UPDATE ") +dbPrefix.colName+" SET ";
     
         const doc = docs[0];
         let fnames = [];
@@ -1766,7 +1809,7 @@ class MySqlInstance extends FlowNode
     async deleteOne(query,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        let {dbPrefix,colName} = this._collection(model);
 
         let qlimit,skip,limit;
         if(options.limit)
@@ -1785,8 +1828,9 @@ class MySqlInstance extends FlowNode
             'deleteOne',
             "DELETE FROM %TABLE% %where% %limit%",
                 {
-                    table : col,
-                    TABLE: col,
+                    table : dbPrefix+colName,
+                    TABLE: dbPrefix+colName,
+                    db_:dbPrefix,
 
                     where,
                     WHERE:(where ? where : "WHERE 1=1"),
@@ -1814,9 +1858,9 @@ class MySqlInstance extends FlowNode
     async deleteMany(query,options, model) 
     {
         const view = model ? model.getView(options.view||options.$view) : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        let {dbPrefix,colName} = this._collection(model);
 
-        let qs = this.queries.deleteMany || "DELETE FROM "+col;
+        let qs = this.queries?.deleteMany || "DELETE FROM "+dbPrefix+colName;
         
         const where = this._mapWhere(query,view);
         qs += where;
