@@ -1075,7 +1075,7 @@ class DbModel extends FlowNode
     instance(lang=null,clientId=null) 
     {
         if(!clientId)
-            clientId = process.env.GED_CLIENT_ID || null;
+            clientId = process.env.client_id || process.env.GED_CLIENT_ID || null;
 
         const name = this._schema.name();
         const dbId = this._db.id && this._db.id() || '';
@@ -1096,6 +1096,43 @@ class DbModel extends FlowNode
 
         return this.instances[key];
     }
+
+    /**
+     * returns a db model instance. Each instance is unique by :
+     * - schema name
+     * - lang (optional)
+     * - database instance name (based on nxn component id)
+     * - client id (optional)
+     * 
+     * @param {{lang,client_id?}} user 
+     * @param {*} [clientId=null] 
+     * 
+     * @returns {DbModelInstance}
+     */
+    instanceByUser(user) 
+    {
+        let lang = user?.lang;
+        let clientId = user?.client_id || process.env.client_id || process.env.GED_CLIENT_ID || null;
+
+        const name = this._schema.name();
+        const dbId = this._db.id && this._db.id() || '';
+        const key = name + '_'+(lang || '') + '_'+dbId+'_'+(clientId||'');
+
+        if(!this.instances[key])
+        {
+            this.instances[key] = new DbModelInstance(
+                this._schema.name(),
+                this._schema,
+                this._db,
+                this.locale.localeByLang(lang),
+                this.config,
+                this._modelManager,
+                this.decorator,
+                clientId);
+        }
+
+        return this.instances[key];
+    }    
 }
 
 /** factory for instanciating a db model */
