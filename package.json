@@ -1,19 +1,17 @@
 {
   "name": "@nxn/db",
-  "version": "1.0.88",
+  "version": "1.0.89",
   "description": "DB services confurable with nxn application config",
   "main": "index.js",
   "types": "types.d.ts",
   "scripts": {
     "build": "npm version patch && git push && npm publish"
   },
-
   "exports": {
     ".": {
       "types": "./types.d.ts"
     }
-  },  
-
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/franck-yvetot/nxn-db.git"
