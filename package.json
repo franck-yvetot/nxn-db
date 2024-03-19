@@ -7,11 +7,6 @@
   "scripts": {
     "build": "npm version patch && git push && npm publish"
   },
-  "exports": {
-    ".": {
-      "types": "./types.d.ts"
-    }
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/franck-yvetot/nxn-db.git"
