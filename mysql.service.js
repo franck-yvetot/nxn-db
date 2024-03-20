@@ -1559,7 +1559,7 @@ class MySqlInstance extends FlowNode
             'insertOne',
             "INSERT INTO %table% (%fields%) VALUES %values%",
                 {
-                    table : col,
+                    table : colName,
                     fields: view.fieldsNamesInsert(true),
                     values: "("+values.join(",")+")",
                     ...doc
@@ -1621,7 +1621,7 @@ class MySqlInstance extends FlowNode
             'insertMany',
             "INSERT INTO %table% (%fields%) VALUES %values%",
                 {
-                    table : col,
+                    table : colName,
                     fields: view.fieldsNamesInsert(true),
                     values: aValues.join(","),
                 }
