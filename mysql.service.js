@@ -628,7 +628,10 @@ class MySqlInstance extends FlowNode
         
         objectSce.forEachSync(format,(vcsv,k) => 
         {
-            let av = vcsv.split(',');
+            if(!vcsv?.split)
+                return;
+
+            let av = vcsv?.split(',') || [];
             for (let i=av.length-1;i>=0;i--)
             {
                 // execute in reverse order
@@ -1127,16 +1130,16 @@ class MySqlInstance extends FlowNode
             return null;
 
         let model = view.model();
-        let {colName,dbPrefix} = this._collection(model);
+        let {colName,dbPrefix,dbName} = this._collection(model);
         let table = colName;
 
         const matches = error.message.match(/Table '([^.]+).([^']+)' doesn't exist/);
         if(matches)
         {
             // get field schema 
-            let dbNname = matches[1];
+            let dbNname2 = matches[1];
             let missingTable = matches[2];
-            if(missingTable != colName && (dbPrefix ? dbPrefix == dbNname : true))
+            if(missingTable != colName && (dbPrefix ? dbName == dbNname2 : true))
             {                
                 model = model.modelManager().getModelByCollection(missingTable);
                 if(model)
@@ -1159,10 +1162,8 @@ class MySqlInstance extends FlowNode
                 return res;
             }
             else
-                throw new Error("cant fix SQL query or add missing table "+dbNname+"."+missingTable);
-
-            // something went wrong
-            return false;
+                // something went wrong
+                throw new Error("cant fix SQL query or add missing table "+dbNname2+"."+missingTable);
         }
 
         // something went wrong
@@ -1172,7 +1173,7 @@ class MySqlInstance extends FlowNode
     /**
      * 
      * @param {*} model 
-     * @returns {{colName,dbPrefix}}
+     * @returns {{colName,dbPrefix,dbName}}
      */
     _collection(model) 
     {
@@ -1181,7 +1182,7 @@ class MySqlInstance extends FlowNode
         let {colName,dbName, dbPrefix} = this._getCollectionName(col,model);
         debug.log("MySQL table name: "+ dbPrefix+colName);
 
-        return {colName,dbPrefix};
+        return {colName,dbPrefix,dbName};
     }
 
    /** 
@@ -1587,7 +1588,7 @@ class MySqlInstance extends FlowNode
     async insertMany(docs,options,model) 
     {
         const view = model ? model.getView(options.view||options.$view||"record") : this.config;
-        const col = options.collection || model.collection() || this.config.table|| this.config.collection;
+        const {colName,dbName} = this._collection(model);
 
         if(docs.length == 0)
             return null;
