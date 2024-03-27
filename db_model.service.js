@@ -943,7 +943,7 @@ class DbModelInstance
         return ret;
     }
     
-    getEmpty(options={}) 
+    async getEmpty(options={}) 
     {
         if(this.decorator && this.decorator.getEmpty)
             return this.decorator.getEmpty(options,this,this._db);
