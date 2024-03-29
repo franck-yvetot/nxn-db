@@ -34,6 +34,15 @@ class SchemaField
         return false;
     }
 
+    /**
+     * return object as SchemaFieldEnum if is an enum, or null
+     * 
+     * @returns {SchemaFieldEnum}
+     */
+    asEnum() {
+        return null
+    }
+
     name() {
         return this._name;
     }
@@ -136,6 +145,24 @@ class SchemaFieldEnum extends SchemaField {
         return true;
     }
 
+    /**
+     * return object as SchemaFieldEnum if is an enum, or null
+     * 
+     * @returns {SchemaFieldEnum}
+     */
+    asEnum() {
+        return this;
+    }
+
+    /**
+     * get localised version of the field.
+     * if multiple enum field, provide target separator (",")
+     * 
+     * @param {*} v 
+     * @param {*} sep 
+     * @param {Lang_Locale} locale 
+     * @returns 
+     */
     getEnum(v,sep=",",locale) {
         if(v.indexOf && v.indexOf('|') > -1)
         {
@@ -592,6 +619,9 @@ class DbView
  */
 class DbSchema
 {
+    /** @type {Record<string,SchemaField | SchemaFieldEnum>} */
+    _fields;
+
     constructor(desc) {
         // get meta
         this._desc = desc;
@@ -643,6 +673,10 @@ class DbSchema
         this._collection = this._meta.table || this._meta.collection || this._meta.name || invalidParam("No collection in data schema");
     }
 
+    /**
+     * schema name
+     * @returns {string}
+     */
     name() {
         return this._name;
     }
@@ -651,6 +685,13 @@ class DbSchema
         return this._collection;
     }
 
+    /**
+     * get a property from the schema (in json).
+     * 
+     * @param {string} n property name 
+     * @param {*} dft 
+     * @returns 
+     */
     prop(n,dft=null) {
         if(typeof this._desc[n] != "undefined")
             return this._desc[n];
@@ -658,14 +699,25 @@ class DbSchema
             return dft;
     }
 
+    /**
+     * get field id (without db prefix)
+     * @returns {string}
+     */
     fId() {
         return this._fId;
     }
 
+    /**
+     * get fields collection by field id
+     * 
+     * @param {string} tag 
+     * @returns {Record<string,SchemaField | SchemaFieldEnum>}
+     */
     fields(tag=null) { 
         if(!tag)
             return this._fields;
 
+        /** @type {Record<string,SchemaField | SchemaFieldEnum>} */
         let fields={};
         for(let n in this._fields)
         {
@@ -676,10 +728,21 @@ class DbSchema
         return fields;
     }
 
+    /**
+     * get csv list of field names
+     * @returns {string}
+     */
     fieldsNames() { 
         return this._fnames; 
     }
 
+    /**
+     * get field by name id;
+     * 
+     * @param {string} fname 
+     * 
+     * @returns {SchemaField}
+     */
     field(fname) {
         if(this._fields[fname])
             return this._fields[fname];
@@ -687,6 +750,11 @@ class DbSchema
         return null;
     }
 
+    /**
+     * get db field prefix
+     * 
+     * @returns {string}
+     */
     fieldPrefix() {
         return this._dbFieldPrefix;
     }
@@ -695,10 +763,14 @@ class DbSchema
         return this._outputWithoutPrefix;
     }
 
+    /** get schema description */
     description() {
         return this._meta.description || "Object "+this.name();
     }
 
+    /** get schema property : uri
+     * this property is used when generating generic API, such as crud.
+     */
     uri() {
         return this._meta.uri || '/'+this.name();
     }
@@ -708,6 +780,12 @@ class DbSchema
         // return this._desc.fields;
     }
 
+    /**
+     * get default query by type
+     * 
+     * @param {*} n 
+     * @returns 
+     */
     getDefaultQuery(n) {
         return this._desc.queries && this._desc.queries[n] || null;
     }
@@ -826,6 +904,7 @@ class DbModelInstance
     schema() {
         return this._schema;
     }
+
     db() {
         return this._db;
     }
@@ -841,15 +920,31 @@ class DbModelInstance
         return this._schema.collection();
     }
 
-    /** returns a client id if exists, or null */
+    /** returns a client id if exists, or null 
+     * 
+     * @returns {string}
+    */
     getClientId() {
         return this.clientId;
     }
 
+    /**
+     * return true if the model has this view.
+     * 
+     * @param {string} n view name
+     * @returns {boolean}
+     */
     hasView(n) {
         return this._schema.hasView(n);
     }
 
+    /**
+     * returns the view, in specified lang.
+     * 
+     * @param {string} n 
+     * @param {string} n view name
+     * @returns {DbView}
+     */
     getView(n,lang=null) 
     {
         lang = lang || this._locale?.lang;
