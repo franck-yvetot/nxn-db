@@ -9,7 +9,6 @@ const {objectSce} = require("@nxn/ext");
 
 const FieldFormater = require('@nxn/db/field_formater.class');
 // const objectService = require("@nxn/ext/object.service");
-const {SchemaField,SchemaFieldEnum,DbView,DbModelInstance,DbModel,DbModelSce} = require("./db_model.service")
 
 const formater = new FieldFormater();
 
@@ -140,7 +139,7 @@ class FireStoreInstance extends FlowNode
     /**
      * get database by name
      * 
-     * @param {string} dbName 
+     * @param {*} dbName 
      * @returns {*}
      */
     getDB(dbName = null)
@@ -154,12 +153,6 @@ class FireStoreInstance extends FlowNode
             return this.dbByName['default'] = getFirestore(this.firebaseApp);
     }
 
-    /**
-     * get firestore collection
-     * 
-     * @param {string} col 
-     * @returns 
-     */
     async collection(col) {
 
         await this.connect();
@@ -253,7 +246,6 @@ class FireStoreInstance extends FlowNode
         });
       }
   
-
       return coll;
     }
 
@@ -313,11 +305,15 @@ class FireStoreInstance extends FlowNode
         let dbName = null;
         if(clientId && this.clientManager)
         {
-            let cltInfos = this.clientManager.getClientInfosById(clientId);
+            let cltInfos = this.clientManager.getClientInfosById(clientId,"firestore");
             let inst = this.id();
             if(cltInfos[inst] && cltInfos[inst].database)
             {
                 dbName = cltInfos[inst].database;
+            }
+            else
+            {
+                dbName = cltInfos.database;
             }
         }
 
