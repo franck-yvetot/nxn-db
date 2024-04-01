@@ -82,7 +82,7 @@ class MongoDbInstance
   async findOne(query,col) {
     await this.connect();
 
-    const doc = await this.db.collection(col).find(query,{});
+    const doc = await this.db.collection(col).findOne(query,{});
     
     return doc;
   }
@@ -91,7 +91,7 @@ class MongoDbInstance
     await this.connect();
 
     limit = parseInt(limit);
-    const docs = await this.db.collection(col).findOne(query,{skip:skip,limit:limit}).toArray();
+    const docs = await this.db.collection(col).find(query,{skip:skip,limit:limit}).toArray();
     
     return docs;
   }
