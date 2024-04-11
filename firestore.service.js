@@ -644,11 +644,11 @@ class FireStoreInstance extends FlowNode
         // get db collection (based on model/schema/client_id)
         let {coll} = this.getCollection(options,model);
 
-        let res = await this.find(query,options,model);
+        let res = await this.findOne(query,options,model);
     
         if(res && res.data) 
         {
-            let doc = res.data[0];
+            let doc = res.data;
             let id = doc.id || doc._id || doc.oid;
             let fields = view.fields();
     
