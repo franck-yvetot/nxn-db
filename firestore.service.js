@@ -455,13 +455,15 @@ class FireStoreInstance extends FlowNode
     {
         let where = {}
 
+        let coll2 = coll;
         for (let p in query)
         {
             where.key = p;
             where.value = query[p];
+            coll2 = coll2.where(where.key,"==",where.value);
         }
 
-        let snap = await coll.where(where.key,"==",where.value).get();
+        let snap = await coll2.get();
         if(!snap.empty)
         {
             snap.forEach(doc => 
