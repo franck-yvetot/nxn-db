@@ -1349,6 +1349,7 @@ class MySqlInstance extends FlowNode
                     db_:dbPrefix,
                     fields: view.fieldsNames(true) || '',
                     where: where,
+                    where_and: (where ? where+" AND " : "WHERE "),
                     WHERE:(where ? where : "WHERE 1=1"),
                     limit: qlimit,
                     ...query
@@ -1409,6 +1410,7 @@ class MySqlInstance extends FlowNode
                     TABLE: dbPrefix+colName+' '+view.tableAlias(),
                     fields: view.fieldsNames(true) || '',
                     where: where,
+                    where_and: (where ? where+" AND " : "WHERE "),
                     WHERE:(where ? where : "WHERE 1=1"),
                     limit: qlimit,
                     select: "select SQL_CALC_FOUND_ROWS",
@@ -1485,6 +1487,7 @@ class MySqlInstance extends FlowNode
             "count * from %table% %where% %limit%",
                 {
                     table : col,
+                    where_and: (where ? where+" AND " : "WHERE "),
                     WHERE:(where ? where : "WHERE 1=1"),
                     where: where,
                     limit: qlimit,
@@ -1731,6 +1734,7 @@ class MySqlInstance extends FlowNode
                         fields_values:fields_values,
     
                         where: where,
+                        where_and: (where ? where+" AND " : "WHERE "),
                         WHERE:(where ? where : "WHERE 1=1"),
 
                         limit: qlimit,
@@ -1834,6 +1838,7 @@ class MySqlInstance extends FlowNode
                     db_:dbPrefix,
 
                     where,
+                    where_and: (where ? where+" AND " : "WHERE "),
                     WHERE:(where ? where : "WHERE 1=1"),
                     limit:qlimit,
                     ...query
