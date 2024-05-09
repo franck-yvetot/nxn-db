@@ -369,7 +369,10 @@ class FireStoreInstance extends FlowNode
                 {
                     const doc = await coll.doc(query.id).get();
                     if(doc.exists)
+                    {
                         data = doc.data();
+                        data._id = doc.id;
+                    }
                     else
                         return null;
                     } 
@@ -651,7 +654,7 @@ class FireStoreInstance extends FlowNode
         if(res && res.data) 
         {
             let doc = res.data;
-            let id = doc.id || doc._id || doc.oid;
+            let id = query.id || doc.id || doc._id || doc.oid;
             let fields = view.fields();
     
             // clean/complete document
