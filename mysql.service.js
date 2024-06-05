@@ -956,7 +956,10 @@ class MySqlInstance extends FlowNode
                 return "''";
 
             if(v.replace)
-                return "'"+v.replace(/'/g,"\\'")+"'";
+                return "'"+v
+                    .replace(/'/g,"\\'")
+                    .replace("||","")
+                    +"'";
             else
                 return v
         }
@@ -1436,7 +1439,7 @@ class MySqlInstance extends FlowNode
             debug.error(error);
         }
 
-        const nb = nbdocs[0].nbrecords;
+        const nb = nbdocs?.length && nbdocs[0].nbrecords;
         let pages=null;
         if(nb) {
             pages = {
@@ -1850,6 +1853,7 @@ class MySqlInstance extends FlowNode
 
         const res = await this.query(qs,view);
         const deleteRows = res.affectedRows||0;
+        debug.log("deleted rows = "+deleteRows);
     
         return deleteRows;
     }
